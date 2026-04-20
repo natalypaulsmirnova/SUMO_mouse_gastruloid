@@ -1,0 +1,163 @@
+library(Seurat)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+obj <- readRDS("E:/Cloupe/601_48h_filtered.rds")
+
+nodal_genes <- c(
+  "Lefty1","Lefty2","Smad7","Tgif1","Skil",
+  "Pitx2","Eomes","Foxa2","Gsc","Cer1",
+  "Lhx1","Mixl1","Otx2"
+)
+
+wnt_genes <- c(
+  "Axin2","Lef1","Sp5","Notum","Tcf7",
+  "Cdx1","Cdx2","Cdx4","Msgn1","Tbx6",
+  "Dkk1","Ccnd1"
+)
+
+bmp_genes <- c(
+  "Id1","Id2","Id3","Smad6","Smad7",
+  "Msx1","Msx2","Bmp4","Bmp7","Hand1"
+)
+
+fgf_genes <- c(
+  "Dusp6","Spry1","Spry2","Etv4","Etv5",
+  "Fgf8","Fgf4","Cdx4","Msgn1"
+)
+
+hh_genes <- c(
+  "Gli1","Ptch1","Ptch2","Hhip",
+  "Foxa2","Shh","Smo"
+)
+
+ra_genes <- c(
+  "Cyp26a1","Cyp26b1","Rarb","Rara",
+  "Crabp1","Crabp2","Hoxa1","Hoxb1"
+)
+
+notch_genes <- c(
+  "Hes1","Hey1","Lfng","Dll1",
+  "Dll3","Notch1","Notch2","Nrarp"
+)
+
+add_score <- function(obj, genes, name) {
+  genes_use <- genes[genes %in% rownames(obj)]
+  if (length(genes_use) == 0) {
+    obj[[paste0(name, "1")]] <- 0
+    return(obj)
+  }
+  AddModuleScore(obj, features = list(genes_use), name = name)
+}
+
+obj <- add_score(obj, nodal_genes, "Nodal")
+obj <- add_score(obj, wnt_genes, "Wnt")
+obj <- add_score(obj, bmp_genes, "Bmp")
+obj <- add_score(obj, fgf_genes, "Fgf")
+obj <- add_score(obj, hh_genes, "Hh")
+obj <- add_score(obj, ra_genes, "Ra")
+obj <- add_score(obj, notch_genes, "Notch")
+
+meta_cols <- colnames(obj@meta.data)
+
+condition_col <- NULL
+for (x in c("group", "condition", "orig.ident")) {
+  if (x %in% meta_cols) {
+    condition_col <- x
+    break
+  }
+}
+
+if (is.null(condition_col)) stop("No condition column found.")
+
+clean_condition <- function(x) {
+  case_when(
+    grepl("ctrl|control", x, ignore.case = TRUE) ~ "Ctrl",
+    grepl("racl", x, ignore.case = TRUE) ~ "RACL",
+    grepl("nacl|naclb", x, ignore.case = TRUE) ~ "NACL",
+    grepl("xal", x, ignore.case = TRUE) ~ "XAL",
+    TRUE ~ NA_character_
+  )
+}
+
+df <- obj@meta.data %>%
+  mutate(
+    Condition = clean_condition(as.character(.data[[condition_col]])),
+    Condition = factor(Condition, levels = c("Ctrl", "RACL", "NACL", "XAL")),
+    Nodal = Nodal1,
+    WNT = Wnt1,
+    BMP = Bmp1,
+    FGF = Fgf1,
+    HH = Hh1,
+    RA = Ra1,
+    Notch = Notch1
+  ) %>%
+  filter(!is.na(Condition))
+
+heatmap_df <- df %>%
+  group_by(Condition) %>%
+  summarise(
+    Nodal = mean(Nodal, na.rm = TRUE),
+    WNT = mean(WNT, na.rm = TRUE),
+    BMP = mean(BMP, na.rm = TRUE),
+    FGF = mean(FGF, na.rm = TRUE),
+    HH = mean(HH, na.rm = TRUE),
+    RA = mean(RA, na.rm = TRUE),
+    Notch = mean(Notch, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  pivot_longer(
+    cols = -Condition,
+    names_to = "Pathway",
+    values_to = "Score"
+  )
+
+heatmap_df$Pathway <- factor(
+  heatmap_df$Pathway,
+  levels = c("Nodal", "WNT", "BMP", "FGF", "HH", "RA", "Notch")
+)
+
+heatmap_df$Condition <- factor(
+  heatmap_df$Condition,
+  levels = c("Ctrl", "RACL", "NACL", "XAL")
+)
+
+p <- ggplot(heatmap_df, aes(x = Pathway, y = Condition, fill = Score)) +
+  geom_tile(color = "white", linewidth = 0.8) +
+  scale_fill_gradient2(
+    low = "navy",
+    mid = "white",
+    high = "firebrick3",
+    midpoint = mean(heatmap_df$Score, na.rm = TRUE),
+    name = "Mean\nmodule score"
+  ) +
+  labs(
+    title = "48h core signaling heatmap",
+    x = NULL,
+    y = NULL
+  ) +
+  theme_classic(base_size = 14) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, face = "bold"),
+    axis.text.y = element_text(face = "bold"),
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    legend.title = element_text(face = "bold")
+  )
+
+print(p)
+
+ggsave(
+  "E:/Cloupe/48h_core7_heatmap.pdf",
+  p,
+  width = 7,
+  height = 3.8
+)
+
+ggsave(
+  "E:/Cloupe/48h_core7_heatmap.png",
+  p,
+  width = 7,
+  height = 3.8,
+  dpi = 300
+)
