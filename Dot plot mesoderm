@@ -1,0 +1,187 @@
+# ============================================================
+# MESODERM MARKERS
+# Cleaned markers, NO bottom annotations
+# ============================================================
+
+library(Seurat)
+library(ggplot2)
+library(svglite)
+library(grid)
+library(scales)
+
+file <- "E:/Cloupe/601_racl_filtered.rds"
+outdir <- "E:/Cloupe/dotplot_racl_manual_marioni_label"
+dir.create(outdir, showWarnings = FALSE, recursive = TRUE)
+
+obj <- readRDS(file)
+
+DefaultAssay(obj) <- if ("RNA" %in% Assays(obj)) "RNA" else DefaultAssay(obj)
+
+if (!"manual_marioni_label" %in% colnames(obj@meta.data)) {
+  stop("manual_marioni_label not found in metadata.")
+}
+
+obj$plot_cluster <- as.character(obj@meta.data$manual_marioni_label)
+
+# -----------------------------
+# cluster order
+# -----------------------------
+cluster_order <- c(
+  "NMPs",
+  "Caudal mesoderm",
+  "Presomitic mesoderm",
+  "Somitic mesoderm",
+  "Anterior somitic tissues",
+  "Posterior somitic tissues",
+  "Dermomyotome",
+  "Sclerotome",
+  "Endotome",
+  "Notochord",
+  "Nascent mesoderm",
+  "Intermediate mesoderm",
+  "Kidney primordium",
+  "Cardiopharyngeal mesoderm",
+  "Limb mesoderm",
+  "Venous endothelium",
+  "Embryo proper endothelium"
+)
+
+# -----------------------------
+# marker blocks
+# -----------------------------
+gene_order <- unique(c(
+  # NMP / caudal
+  "T","Sox2","Nkx1-2","Cdx1","Cdx2","Cdx4","Fgf8",
+
+  # PSM / segmentation
+  "Msgn1","Tbx6","Dll1","Lfng","Hes7","Rspo3","Mesp2","Dmrt2",
+
+  # somite
+  "Meox1","Meox2","Pax3","Tcf15","Uncx",
+  "Pax1","Pax9","Foxc1","Foxc2","Twist1","Twist2",
+
+  # axial
+  "Noto","Foxa2","Shh","Nog","Chrd","Foxj1",
+
+  # intermediate / kidney
+  "Lhx1","Osr1","Pax8","Wt1",
+  "Cited1","Cited2","Eya1",
+
+  # LPM / cardiopharyngeal
+  "Tbx1","Isl1","Hand1","Hand2",
+  "Foxf1","Tcf21","Alx1","Gata6","Aldh1a2",
+
+  # limb
+  "Lef1","Pitx1","Sox9","Msx1","Msx2","Prrx1","Prrx2",
+
+  # endothelial
+  "Kdr","Cdh5","Pecam1","Tek","Flt1","Emcn"
+))
+
+# -----------------------------
+# filter
+# -----------------------------
+present_clusters <- intersect(cluster_order, unique(obj$plot_cluster))
+present_genes <- intersect(gene_order, rownames(obj))
+
+message("Present genes: ", length(present_genes), " / ", length(gene_order))
+
+obj_sub <- subset(obj, subset = plot_cluster %in% present_clusters)
+
+Idents(obj_sub) <- factor(
+  obj_sub$plot_cluster,
+  levels = cluster_order
+)
+
+# -----------------------------
+# DotPlot → data
+# -----------------------------
+dp <- DotPlot(
+  obj_sub,
+  features = present_genes
+)$data
+
+dp$features.plot <- factor(dp$features.plot, levels = present_genes)
+dp$id <- factor(dp$id, levels = rev(present_clusters))
+
+# -----------------------------
+# plot
+# -----------------------------
+p <- ggplot(
+  dp,
+  aes(
+    x = features.plot,
+    y = id,
+    size = pct.exp,
+    fill = avg.exp.scaled
+  )
+) +
+  geom_point(
+    shape = 21,
+    color = "black",
+    stroke = 0.22
+  ) +
+  scale_x_discrete(position = "top", drop = FALSE) +
+  scale_y_discrete(drop = FALSE) +
+  scale_fill_gradient2(
+    low = "#440154",
+    mid = "#2C7BB6",
+    high = "#FDE725",
+    midpoint = 0,
+    limits = c(-2, 2),
+    oob = scales::squish,
+    name = "Scaled expression"
+  ) +
+  scale_size(
+    range = c(0.2, 7),
+    breaks = c(0, 25, 50, 75, 100),
+    limits = c(0, 100),
+    name = "% expressing"
+  ) +
+  labs(
+    title = "RACL",
+    x = NULL,
+    y = NULL
+  ) +
+  theme_classic(base_size = 10) +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0, size = 16),
+
+    axis.text.x = element_text(
+      angle = 60,
+      hjust = 0,
+      vjust = 0,
+      size = 8,
+      color = "black"
+    ),
+    axis.text.y = element_text(
+      size = 10.5,
+      color = "grey25"
+    ),
+
+    axis.title = element_blank(),
+    axis.ticks = element_blank(),
+    axis.line = element_blank(),
+
+    panel.border = element_rect(
+      color = "black",
+      fill = NA,
+      linewidth = 0.35
+    ),
+
+    panel.grid.major.x = element_line(color = "grey88", linewidth = 0.25),
+    panel.grid.major.y = element_line(color = "grey88", linewidth = 0.25),
+
+    legend.position = "right"
+  )
+
+print(p)
+
+ggsave(
+  file.path(outdir, "RACL_mesoderm_dotplot_cleaned_final.pdf"),
+  p,
+  width = 18,
+  height = 6.5
+)
+
+message("Done.")
