@@ -1,0 +1,488 @@
+# =========================================================
+# CELLCHAT 72h — GROUPED CELL TYPES
+# Uses ONLY: F:/CELLCHAT.xlsx
+# Separate chord panel per pathway
+# Edge color = PATHWAY
+# =========================================================
+
+library(readxl)
+library(dplyr)
+library(tidyr)
+library(circlize)
+library(RColorBrewer)
+
+cellchat_file <- "F:/CELLCHAT.xlsx"
+
+output_dir <- "F:/CELLCHAT_72h_grouped_chords_pathway_colors"
+dir.create(output_dir, showWarnings = FALSE, recursive = TRUE)
+
+clean_colnames <- function(x) {
+  x <- tolower(x)
+  x <- gsub("\\s+", "_", x)
+  x <- gsub("[^a-z0-9_]", "", x)
+  x
+}
+
+read_cellchat_sheet <- function(sheet_name, condition_name) {
+  
+  raw <- read_excel(cellchat_file, sheet = sheet_name, col_names = FALSE)
+  
+  header_row <- which(apply(raw, 1, function(r) {
+    any(grepl("^source$", tolower(as.character(r)))) &&
+      any(grepl("^target$", tolower(as.character(r))))
+  }))[1]
+  
+  if (is.na(header_row)) {
+    stop(paste0("Could not find source/target header in sheet: ", sheet_name))
+  }
+  
+  x <- read_excel(
+    cellchat_file,
+    sheet = sheet_name,
+    skip = header_row - 1
+  )
+  
+  colnames(x) <- clean_colnames(colnames(x))
+  
+  x %>%
+    mutate(
+      condition = condition_name,
+      time = "72h"
+    )
+}
+
+all_sheets <- excel_sheets(cellchat_file)
+print(all_sheets)
+
+sheet_map <- data.frame(
+  sheet = all_sheets[grepl("72", all_sheets)],
+  stringsAsFactors = FALSE
+) %>%
+  mutate(
+    condition = case_when(
+      grepl("ctrl|control", sheet, ignore.case = TRUE) ~ "Control",
+      grepl("racl", sheet, ignore.case = TRUE) ~ "RACL",
+      grepl("nacl|naclb", sheet, ignore.case = TRUE) ~ "NACLB",
+      grepl("xal", sheet, ignore.case = TRUE) ~ "XAL",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  filter(!is.na(condition))
+
+print(sheet_map)
+
+df <- bind_rows(
+  lapply(seq_len(nrow(sheet_map)), function(i) {
+    read_cellchat_sheet(
+      sheet_name = sheet_map$sheet[i],
+      condition_name = sheet_map$condition[i]
+    )
+  })
+)
+
+df <- df %>%
+  mutate(
+    source = as.character(.data$source),
+    target = as.character(.data$target),
+    ligand = as.character(.data$ligand),
+    receptor = as.character(.data$receptor),
+    pathway_name = as.character(.data$pathway_name),
+    prob = as.numeric(.data$prob)
+  ) %>%
+  filter(
+    !is.na(source),
+    !is.na(target),
+    !is.na(ligand),
+    !is.na(pathway_name),
+    !is.na(prob),
+    prob > 0
+  )
+
+# =========================================================
+# MANUAL CLUSTER GROUPING
+# =========================================================
+
+group_cluster <- function(x) {
+  case_when(
+    x %in% c("ExE ectoderm", "ExE ectoderm artifact") ~ "ExE ectoderm artifact",
+    
+    x %in% c(
+      "ExE endoderm", "Visceral endoderm", "Parietal endoderm",
+      "VE", "PE"
+    ) ~ "Extraembryonic endoderm-like",
+    
+    x %in% c(
+      "PGC", "Primordial germ cells", "Pluripotent cells", "PGC/Pluri"
+    ) ~ "PGC/Pluri",
+    
+    x %in% c("Epiblast", "Epiblast (Epi)", "Epi") ~ "Epiblast (Epi)",
+    
+    x %in% c(
+      "Primitive Streak", "Primitive streak", "PS",
+      "Anterior Primitive Streak", "Anterior primitive streak", "APS"
+    ) ~ "Primitive Streak (PS)",
+    
+    x %in% c("Nascent mesoderm", "Nascent meso") ~ "Nascent meso",
+    
+    x %in% c("Caudal epiblast") ~ "Caudal epiblast",
+    
+    x %in% c("Ectoderm") ~ "Ectoderm",
+    
+    x %in% c("Neural tube", "Neural Tube") ~ "Neural tube",
+    
+    x %in% c(
+      "Spinal cord", "Spinal cord progenitors", "Spinal cord progenitor"
+    ) ~ "Spinal cord",
+    
+    x %in% c("Midbrain") ~ "Midbrain",
+    
+    x %in% c("Hindbrain") ~ "Hindbrain",
+    
+    x %in% c("Node", "Notochord", "Node/Notochord") ~ "Node/Notochord",
+    
+    x %in% c("NMP", "NMPs", "Neuromesodermal progenitors") ~ "NMP",
+    
+    x %in% c(
+      "Paraxial mesoderm",
+      "Presomitic mesoderm",
+      "Somitic mesoderm",
+      "Anterior somitic tissues",
+      "Posterior somitic tissues",
+      "Dermomyotome",
+      "Sclerotome",
+      "Endotome",
+      "Paraxial meso (PxM)"
+    ) ~ "Paraxial meso (PxM)",
+    
+    x %in% c(
+      "Cardiopharyngeal mesoderm",
+      "Cardiopharyngeal meso",
+      "Cardiopharyngeal meso (Cardioph)"
+    ) ~ "Cardiopharyngeal meso (Cardioph)",
+    
+    x %in% c(
+      "Intermediate mesoderm",
+      "Intermediate meso",
+      "Intermediate meso (IM)"
+    ) ~ "Intermediate meso (IM)",
+    
+    x %in% c(
+      "Lateral plate mesoderm",
+      "LPM",
+      "Limb mesoderm",
+      "LPM (Limb meso)"
+    ) ~ "LPM (Limb meso)",
+    
+    x %in% c("Endothelium", "Endothelial cells") ~ "Endothelium",
+    
+    x %in% c(
+      "Definitive endoderm",
+      "Foregut",
+      "Midgut",
+      "Hindgut",
+      "Gut tube",
+      "Definitive endoderm/Gut"
+    ) ~ "Definitive endoderm/Gut",
+    
+    TRUE ~ x
+  )
+}
+
+df <- df %>%
+  mutate(
+    source = group_cluster(source),
+    target = group_cluster(target)
+  )
+
+print(sort(unique(c(df$source, df$target))))
+
+# =========================================================
+# PATHWAY COLORS
+# =========================================================
+
+pathway_colors <- c(
+  "WNT"      = "#1f78b4",
+  "ncWNT"    = "#08519c",
+  "FGF"      = "#ff7f00",
+  "TGFb"     = "#e31a1c",
+  "BMP"      = "#6a3d9a",
+  "HH"       = "#33a02c",
+  "VEGF"     = "#b15928",
+  "LAMININ"  = "#a6cee3",
+  "COLLAGEN" = "#b2df8a",
+  "FN1"      = "#fdbf6f",
+  "MDK"      = "#cab2d6",
+  "PDGF"     = "#fb9a99"
+)
+
+# =========================================================
+# CLUSTER ORDER AND COLORS
+# =========================================================
+
+condition_order <- c("Control", "RACL", "NACLB", "XAL")
+
+cluster_order <- c(
+  "ExE ectoderm artifact",
+  "Extraembryonic endoderm-like",
+  "PGC/Pluri",
+  "Epiblast (Epi)",
+  "Primitive Streak (PS)",
+  "Nascent meso",
+  "Caudal epiblast",
+  "Ectoderm",
+  "Node/Notochord",
+  "NMP",
+  "Paraxial meso (PxM)",
+  "Cardiopharyngeal meso (Cardioph)",
+  "Intermediate meso (IM)",
+  "LPM (Limb meso)",
+  "Endothelium",
+  "Definitive endoderm/Gut",
+  "Neural tube",
+  "Midbrain",
+  "Spinal cord",
+  "Hindbrain"
+)
+
+cluster_order <- cluster_order[
+  cluster_order %in% unique(c(df$source, df$target))
+]
+
+cluster_colors <- setNames(
+  colorRampPalette(c(
+    "#4B0082",
+    "#228B22",
+    "#FFD700",
+    "#999999",
+    "#B22222"
+  ))(length(cluster_order)),
+  cluster_order
+)
+
+# =========================================================
+# GLOBAL SCALING ACROSS 72h CONDITIONS
+# =========================================================
+
+global_max_prob <- df %>%
+  group_by(source, target, pathway_name, condition) %>%
+  summarise(prob = sum(prob, na.rm = TRUE), .groups = "drop") %>%
+  summarise(max_prob = max(prob, na.rm = TRUE)) %>%
+  pull(max_prob)
+
+# =========================================================
+# PLOT ONE CHORD
+# =========================================================
+
+plot_one_chord <- function(data,
+                           pathway_use,
+                           condition_use,
+                           min_prob = 0.001,
+                           top_edges = 35,
+                           label_cex = 0.75) {
+  
+  dat <- data %>%
+    filter(
+      pathway_name == pathway_use,
+      condition == condition_use,
+      prob >= min_prob
+    ) %>%
+    group_by(source, target, pathway_name) %>%
+    summarise(prob = sum(prob, na.rm = TRUE), .groups = "drop") %>%
+    arrange(desc(prob))
+  
+  if (!is.null(top_edges)) {
+    dat <- dat %>% slice_head(n = top_edges)
+  }
+  
+  if (nrow(dat) == 0) {
+    plot.new()
+    title(paste0(condition_use, " — ", pathway_use, "\nNo interactions"))
+    return(NULL)
+  }
+  
+  dat <- dat %>%
+    mutate(
+      scaled_prob = prob / global_max_prob,
+      scaled_prob = pmax(scaled_prob, 0.03)
+    )
+  
+  edge_cols <- rep(pathway_colors[pathway_use], nrow(dat))
+  edge_cols[is.na(edge_cols)] <- "#999999"
+  
+  sectors_here <- unique(c(dat$source, dat$target))
+  local_order <- c(
+    cluster_order[cluster_order %in% sectors_here],
+    setdiff(sectors_here, cluster_order)
+  )
+  
+  local_cluster_colors <- cluster_colors[local_order]
+  
+  missing_sector_colors <- setdiff(local_order, names(local_cluster_colors))
+  if (length(missing_sector_colors) > 0) {
+    local_cluster_colors <- c(
+      local_cluster_colors,
+      setNames(rep("#BDBDBD", length(missing_sector_colors)), missing_sector_colors)
+    )
+  }
+  local_cluster_colors <- local_cluster_colors[local_order]
+  
+  circos.clear()
+  circos.par(
+    gap.degree = 6,
+    start.degree = 90,
+    track.margin = c(0.01, 0.01),
+    points.overflow.warning = FALSE
+  )
+  
+  chordDiagram(
+    x = dat[, c("source", "target", "scaled_prob")],
+    order = local_order,
+    grid.col = local_cluster_colors,
+    col = edge_cols,
+    transparency = 0.45,
+    directional = 1,
+    direction.type = c("arrows", "diffHeight"),
+    diffHeight = -0.035,
+    link.arr.type = "big.arrow",
+    link.sort = TRUE,
+    link.decreasing = FALSE,
+    annotationTrack = "grid",
+    preAllocateTracks = list(track.height = 0.16)
+  )
+  
+  circos.trackPlotRegion(
+    track.index = 1,
+    panel.fun = function(x, y) {
+      sector.name <- get.cell.meta.data("sector.index")
+      xlim <- get.cell.meta.data("xlim")
+      ylim <- get.cell.meta.data("ylim")
+      
+      circos.text(
+        x = mean(xlim),
+        y = ylim[1] + 0.14,
+        labels = sector.name,
+        facing = "clockwise",
+        niceFacing = TRUE,
+        adj = c(0, 0.5),
+        cex = label_cex
+      )
+    },
+    bg.border = NA
+  )
+  
+  title(
+    paste0(condition_use, " 72h — ", pathway_use),
+    cex.main = 1.0,
+    font.main = 2
+  )
+}
+
+# =========================================================
+# PATHWAY PANEL: 4 CONDITIONS
+# =========================================================
+
+plot_pathway_panel_72h <- function(pathway_use,
+                                   min_prob = 0.001,
+                                   top_edges = 35,
+                                   label_cex = 0.75,
+                                   save_pdf = TRUE,
+                                   show_in_R = TRUE) {
+  
+  if (save_pdf) {
+    pdf_file <- file.path(
+      output_dir,
+      paste0("72h_", pathway_use, "_grouped_chord_panel_pathway_color.pdf")
+    )
+    
+    pdf(
+      pdf_file,
+      width = 28 / 2.54,
+      height = 20 / 2.54,
+      useDingbats = FALSE
+    )
+  }
+  
+  par(mfrow = c(2, 2), mar = c(1, 1, 3, 1))
+  
+  for (cond in condition_order) {
+    plot_one_chord(
+      data = df,
+      pathway_use = pathway_use,
+      condition_use = cond,
+      min_prob = min_prob,
+      top_edges = top_edges,
+      label_cex = label_cex
+    )
+  }
+  
+  par(mfrow = c(1, 1))
+  
+  if (save_pdf) {
+    dev.off()
+    message("Saved: ", pdf_file)
+  }
+  
+  if (show_in_R) {
+    par(mfrow = c(2, 2), mar = c(1, 1, 3, 1))
+    
+    for (cond in condition_order) {
+      plot_one_chord(
+        data = df,
+        pathway_use = pathway_use,
+        condition_use = cond,
+        min_prob = min_prob,
+        top_edges = top_edges,
+        label_cex = label_cex
+      )
+    }
+    
+    par(mfrow = c(1, 1))
+  }
+}
+
+# =========================================================
+# RUN
+# =========================================================
+
+print(sort(unique(df$pathway_name)))
+
+pathways_to_plot <- c(
+  "WNT",
+  "ncWNT",
+  "FGF",
+  "TGFb",
+  "BMP",
+  "HH",
+  "VEGF",
+  "LAMININ",
+  "COLLAGEN",
+  "FN1",
+  "MDK",
+  "PDGF"
+)
+
+pathways_to_plot <- pathways_to_plot[
+  pathways_to_plot %in% unique(df$pathway_name)
+]
+
+# Test one first
+plot_pathway_panel_72h(
+  pathway_use = "WNT",
+  min_prob = 0.001,
+  top_edges = 35,
+  label_cex = 0.75,
+  save_pdf = TRUE,
+  show_in_R = TRUE
+)
+
+# Save all
+for (pw in pathways_to_plot) {
+  plot_pathway_panel_72h(
+    pathway_use = pw,
+    min_prob = 0.001,
+    top_edges = 35,
+    label_cex = 0.75,
+    save_pdf = TRUE,
+    show_in_R = FALSE
+  )
+}
