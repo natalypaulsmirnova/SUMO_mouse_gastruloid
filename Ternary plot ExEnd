@@ -1,0 +1,192 @@
+# =========================================================
+# 120h CELL-LEVEL TERNARY PANEL BY CONDITION
+# WITH BLACK OUTLINE AROUND EACH CELL
+# =========================================================
+
+library(Seurat)
+library(dplyr)
+library(ggplot2)
+
+# -----------------------------
+# Load 120h object
+# -----------------------------
+obj <- readRDS("E:/Cloupe/601_120h_filtered.rds")
+
+# -----------------------------
+# Metadata
+# -----------------------------
+obj$cluster <- as.character(obj@meta.data$manual_marioni_label)
+
+condition_col <- "group"   # change if needed
+obj$condition <- as.character(obj@meta.data[[condition_col]])
+
+print(table(obj$condition, obj$cluster))
+
+# -----------------------------
+# Keep only target clusters
+# -----------------------------
+keep_clusters <- c(
+  "ExE endoderm",
+  "Visceral endoderm",
+  "Parietal endoderm"
+)
+
+obj_sub <- obj[, obj$cluster %in% keep_clusters]
+
+print(table(obj_sub$condition, obj_sub$cluster))
+
+# -----------------------------
+# Marker sets
+# -----------------------------
+marker_sets <- list(
+  ParE = c(
+    "Htra1","Pdgfra","Sox17","Hs3st1","Lifr","Bmper",
+    "Grem2","Nog","Fst","Thbd","Plat","Cryab","Eva1a","Fxyd3"
+  ),
+
+  VE_PVE = c(
+    "Cdhr2","Fabp1","Gjb1","Bmp6","Rdh10","Apoa2",
+    "Aldh1l1","Aldob","Creb3l3","Hnf4a","Apoa1"
+  ),
+
+  DVE_AVE = c(
+    "Lefty1","Cer1","Hhex","Dkk1","Gsc","Lhx1",
+    "Mest","Hesx1","Shisa2","Fzd5"
+  )
+)
+
+genes_present <- rownames(obj_sub)
+
+marker_sets <- lapply(marker_sets, function(x) {
+  intersect(x, genes_present)
+})
+
+print(sapply(marker_sets, length))
+print(marker_sets)
+
+if (any(sapply(marker_sets, length) == 0)) {
+  stop("One marker set has zero genes present.")
+}
+
+# -----------------------------
+# Module scores
+# -----------------------------
+for (nm in names(marker_sets)) {
+  obj_sub <- AddModuleScore(
+    object = obj_sub,
+    features = list(marker_sets[[nm]]),
+    name = paste0(nm, "_score")
+  )
+}
+
+colnames(obj_sub@meta.data)[grep("_score1$", colnames(obj_sub@meta.data))] <-
+  paste0(names(marker_sets), "_score")
+
+# -----------------------------
+# Build dataframe
+# -----------------------------
+df <- obj_sub@meta.data %>%
+  select(
+    condition,
+    cluster,
+    ParE_score,
+    VE_PVE_score,
+    DVE_AVE_score
+  )
+
+# -----------------------------
+# Ternary transform
+# Same scaling across all 120h conditions
+# -----------------------------
+min_val <- min(
+  df$ParE_score,
+  df$VE_PVE_score,
+  df$DVE_AVE_score,
+  na.rm = TRUE
+)
+
+df <- df %>%
+  mutate(
+    ParE = ParE_score - min_val + 1e-6,
+    VE   = VE_PVE_score - min_val + 1e-6,
+    AVE  = DVE_AVE_score - min_val + 1e-6,
+
+    sum = ParE + VE + AVE,
+
+    p_ParE = ParE / sum,
+    p_VE   = VE / sum,
+    p_AVE  = AVE / sum,
+
+    x = p_VE + 0.5 * p_AVE,
+    y = (sqrt(3) / 2) * p_AVE
+  )
+
+# -----------------------------
+# Triangle frame
+# -----------------------------
+triangle <- data.frame(
+  x = c(0, 1, 0.5, 0),
+  y = c(0, 0, sqrt(3) / 2, 0)
+)
+
+# -----------------------------
+# Cluster colors
+# -----------------------------
+cluster_colors <- c(
+  "Parietal endoderm" = "#FFD700",  # yellow
+  "Visceral endoderm" = "#2E8B57",  # green
+  "ExE endoderm"      = "#2D004B"   # deep purple
+)
+
+# -----------------------------
+# Panel plot
+# -----------------------------
+p <- ggplot(df, aes(x = x, y = y)) +
+
+  geom_polygon(
+    data = triangle,
+    aes(x = x, y = y),
+    inherit.aes = FALSE,
+    fill = NA,
+    color = "black",
+    linewidth = 0.9
+  ) +
+
+  geom_point(
+    aes(fill = cluster),
+    shape = 21,
+    color = "black",
+    stroke = 0.3,
+    size = 3,
+    alpha = 0.5
+  ) +
+
+  annotate("text", x = 0, y = -0.055, label = "ParE", size = 4) +
+  annotate("text", x = 1, y = -0.055, label = "VE/PVE", size = 4) +
+  annotate("text", x = 0.5, y = sqrt(3) / 2 + 0.055, label = "DVE/AVE", size = 4) +
+
+  facet_wrap(~ condition, nrow = 1) +
+
+  scale_fill_manual(values = cluster_colors) +
+
+  coord_equal(
+    xlim = c(-0.08, 1.08),
+    ylim = c(-0.1, sqrt(3) / 2 + 0.1)
+  ) +
+
+  theme_void(base_size = 12) +
+
+  theme(
+    strip.text = element_text(size = 13, face = "bold"),
+    legend.position = "bottom",
+    legend.title = element_blank(),
+    legend.text = element_text(size = 11),
+    plot.title = element_text(hjust = 0.5, face = "bold", size = 14)
+  ) +
+
+  ggtitle("120h cell-level ExEnd identity proximity by condition")
+
+# -----------------------------
+# Show plot in R
+# -----------------------------
+print(p)
