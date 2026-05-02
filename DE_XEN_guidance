@@ -1,0 +1,442 @@
+# =========================================================
+# CELLCHAT 120h — ExEndoderm <-> Gut signaling
+# ONLY GUIDANCE / CHEMOTAXIS pathways
+# ORIGINAL source/target names are used
+# Edge color = pathway
+# Legend UNDERNEATH
+# Saves to: E:/GRAPHS
+# =========================================================
+
+library(readxl)
+library(dplyr)
+library(tidyr)
+library(circlize)
+library(RColorBrewer)
+
+cellchat_file <- "F:/CELLCHAT.xlsx"
+output_dir <- "E:/GRAPHS"
+dir.create(output_dir, showWarnings = FALSE, recursive = TRUE)
+
+timepoint <- "120h"
+
+exend_cells <- c(
+  "ExE endoderm",
+  "Visceral endoderm",
+  "Parietal endoderm",
+  "VE",
+  "PE"
+)
+
+gut_cells <- c(
+  "Definitive endoderm",
+  "Foregut",
+  "Midgut",
+  "Hindgut",
+  "Gut tube"
+)
+
+# =========================================================
+# GUIDANCE / CHEMOTAXIS pathways only
+# Add/remove names depending on your CellChat output
+# =========================================================
+
+guidance_pathways <- c(
+  "SEMA3",
+  "SEMA4",
+  "SEMA5",
+  "SEMA6",
+  "SEMA7",
+  "SLIT",
+  "NTN",
+  "EPHA",
+  "EPHB",
+  "CXCL",
+  "CCL",
+  "CX3C",
+  "CHEMERIN",
+  "VISFATIN",
+  "ANGPTL",
+  "ANGPT"
+)
+
+clean_colnames <- function(x) {
+  x <- tolower(x)
+  x <- gsub("\\s+", "_", x)
+  x <- gsub("[^a-z0-9_]", "", x)
+  x
+}
+
+read_cellchat_sheet <- function(sheet_name, condition_name) {
+  
+  raw <- read_excel(cellchat_file, sheet = sheet_name, col_names = FALSE)
+  
+  header_row <- which(apply(raw, 1, function(r) {
+    any(grepl("^source$", tolower(as.character(r)))) &&
+      any(grepl("^target$", tolower(as.character(r))))
+  }))[1]
+  
+  if (is.na(header_row)) {
+    stop(paste0("Could not find source/target header in sheet: ", sheet_name))
+  }
+  
+  x <- read_excel(
+    cellchat_file,
+    sheet = sheet_name,
+    skip = header_row - 1,
+    col_types = "text"
+  )
+  
+  colnames(x) <- clean_colnames(colnames(x))
+  
+  x %>%
+    mutate(
+      condition = condition_name,
+      time = timepoint
+    )
+}
+
+# =========================================================
+# Load 120h sheets
+# =========================================================
+
+all_sheets <- excel_sheets(cellchat_file)
+
+sheet_map <- data.frame(
+  sheet = all_sheets[grepl(gsub("h", "", timepoint), all_sheets)],
+  stringsAsFactors = FALSE
+) %>%
+  mutate(
+    condition = case_when(
+      grepl("ctrl|control", sheet, ignore.case = TRUE) ~ "Control",
+      grepl("racl", sheet, ignore.case = TRUE) ~ "RACL",
+      grepl("nacl|naclb", sheet, ignore.case = TRUE) ~ "NACLB",
+      grepl("xal", sheet, ignore.case = TRUE) ~ "XAL",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  filter(!is.na(condition))
+
+print(sheet_map)
+
+df <- bind_rows(
+  lapply(seq_len(nrow(sheet_map)), function(i) {
+    read_cellchat_sheet(
+      sheet_name = sheet_map$sheet[i],
+      condition_name = sheet_map$condition[i]
+    )
+  })
+)
+
+df <- df %>%
+  mutate(
+    source = as.character(.data$source),
+    target = as.character(.data$target),
+    ligand = as.character(.data$ligand),
+    receptor = as.character(.data$receptor),
+    pathway_name = as.character(.data$pathway_name),
+    prob = as.numeric(.data$prob)
+  ) %>%
+  filter(
+    !is.na(source),
+    !is.na(target),
+    !is.na(pathway_name),
+    !is.na(prob),
+    prob > 0
+  )
+
+# =========================================================
+# Keep only ExEndoderm <-> Gut AND guidance pathways
+# =========================================================
+
+df_exend_gut <- df %>%
+  filter(
+    pathway_name %in% guidance_pathways,
+    (source %in% exend_cells & target %in% gut_cells) |
+      (source %in% gut_cells & target %in% exend_cells)
+  )
+
+print(table(df_exend_gut$condition))
+print(sort(unique(df_exend_gut$source)))
+print(sort(unique(df_exend_gut$target)))
+print(sort(unique(df_exend_gut$pathway_name)))
+
+if (nrow(df_exend_gut) == 0) {
+  stop("No guidance/chemotaxis ExEndoderm <-> Gut interactions found. Check pathway names and cell names.")
+}
+
+# =========================================================
+# Pathway colors
+# =========================================================
+
+pathways <- sort(unique(df_exend_gut$pathway_name))
+
+pathway_colors_manual <- c(
+  "SEMA3"    = "#E41A1C",
+  "SEMA4"    = "#377EB8",
+  "SEMA5"    = "#4DAF4A",
+  "SEMA6"    = "#984EA3",
+  "SEMA7"    = "#FF7F00",
+  "SLIT"     = "#A65628",
+  "NTN"      = "#F781BF",
+  "EPHA"     = "#000000",
+  "EPHB"     = "#00CED1",
+  "CXCL"     = "#FFD700",
+  "CCL"      = "#8B0000",
+  "CX3C"     = "#006400",
+  "CHEMERIN" = "#00008B",
+  "VISFATIN" = "#FF1493",
+  "ANGPTL"   = "#6A3D9A",
+  "ANGPT"    = "#B15928"
+)
+
+pathway_colors <- pathway_colors_manual[pathways]
+
+missing_pathway_cols <- pathways[is.na(pathway_colors)]
+if (length(missing_pathway_cols) > 0) {
+  pathway_colors[missing_pathway_cols] <- colorRampPalette(c(
+    "#E41A1C", "#377EB8", "#4DAF4A", "#984EA3",
+    "#FF7F00", "#000000"
+  ))(length(missing_pathway_cols))
+}
+
+# =========================================================
+# Cell colors
+# =========================================================
+
+cell_order <- c(
+  "ExE endoderm",
+  "Visceral endoderm",
+  "Parietal endoderm",
+  "VE",
+  "PE",
+  "Definitive endoderm",
+  "Foregut",
+  "Midgut",
+  "Hindgut",
+  "Gut tube"
+)
+
+cell_order <- cell_order[
+  cell_order %in% unique(c(df_exend_gut$source, df_exend_gut$target))
+]
+
+cell_colors <- c(
+  "ExE endoderm" = "#006400",
+  "Visceral endoderm" = "#00A65A",
+  "Parietal endoderm" = "#7AC943",
+  "VE" = "#00A65A",
+  "PE" = "#7AC943",
+  "Definitive endoderm" = "#4B0082",
+  "Foregut" = "#6A3D9A",
+  "Midgut" = "#9E3DFF",
+  "Hindgut" = "#C77CFF",
+  "Gut tube" = "#2E0854"
+)
+
+cell_colors <- cell_colors[cell_order]
+
+condition_order <- c("Control", "RACL", "NACLB", "XAL")
+
+# =========================================================
+# Global scaling
+# =========================================================
+
+global_max_prob <- df_exend_gut %>%
+  group_by(source, target, pathway_name, condition) %>%
+  summarise(prob = sum(prob, na.rm = TRUE), .groups = "drop") %>%
+  summarise(max_prob = max(prob, na.rm = TRUE)) %>%
+  pull(max_prob)
+
+# =========================================================
+# Plot one chord
+# =========================================================
+
+plot_exend_gut_chord <- function(condition_use,
+                                 min_prob = 0.001,
+                                 top_edges = 60,
+                                 label_cex = 0.9) {
+  
+  dat <- df_exend_gut %>%
+    filter(
+      condition == condition_use,
+      prob >= min_prob
+    ) %>%
+    group_by(source, target, pathway_name) %>%
+    summarise(prob = sum(prob, na.rm = TRUE), .groups = "drop") %>%
+    arrange(desc(prob))
+  
+  if (!is.null(top_edges)) {
+    dat <- dat %>% slice_head(n = top_edges)
+  }
+  
+  if (nrow(dat) == 0) {
+    plot.new()
+    title(paste0(condition_use, " ", timepoint, "\nNo guidance ExEndoderm–Gut interactions"))
+    return(NULL)
+  }
+  
+  dat <- dat %>%
+    mutate(
+      scaled_prob = prob / global_max_prob,
+      scaled_prob = pmax(scaled_prob, 0.04)
+    )
+  
+  sectors_here <- unique(c(dat$source, dat$target))
+  
+  local_order <- c(
+    cell_order[cell_order %in% sectors_here],
+    setdiff(sectors_here, cell_order)
+  )
+  
+  local_cell_colors <- cell_colors[local_order]
+  
+  missing_cols <- setdiff(local_order, names(local_cell_colors))
+  if (length(missing_cols) > 0) {
+    local_cell_colors <- c(
+      local_cell_colors,
+      setNames(rep("#BDBDBD", length(missing_cols)), missing_cols)
+    )
+  }
+  
+  local_cell_colors <- local_cell_colors[local_order]
+  
+  edge_cols <- pathway_colors[dat$pathway_name]
+  edge_cols[is.na(edge_cols)] <- "#999999"
+  
+  circos.clear()
+  circos.par(
+    gap.degree = 9,
+    start.degree = 90,
+    track.margin = c(0.01, 0.01),
+    points.overflow.warning = FALSE
+  )
+  
+  chordDiagram(
+    x = dat[, c("source", "target", "scaled_prob")],
+    order = local_order,
+    grid.col = local_cell_colors,
+    col = edge_cols,
+    transparency = 0.15,
+    directional = 1,
+    direction.type = c("arrows", "diffHeight"),
+    diffHeight = -0.035,
+    link.arr.type = "big.arrow",
+    link.sort = TRUE,
+    link.decreasing = FALSE,
+    annotationTrack = "grid",
+    preAllocateTracks = list(track.height = 0.20)
+  )
+  
+  circos.trackPlotRegion(
+    track.index = 1,
+    panel.fun = function(x, y) {
+      sector.name <- get.cell.meta.data("sector.index")
+      xlim <- get.cell.meta.data("xlim")
+      ylim <- get.cell.meta.data("ylim")
+      
+      circos.text(
+        x = mean(xlim),
+        y = ylim[1] + 0.18,
+        labels = sector.name,
+        facing = "clockwise",
+        niceFacing = TRUE,
+        adj = c(0, 0.5),
+        cex = label_cex
+      )
+    },
+    bg.border = NA
+  )
+  
+  title(
+    paste0(condition_use, " ", timepoint, " — Guidance ExEndoderm ↔ Gut"),
+    cex.main = 1.15,
+    font.main = 2
+  )
+}
+
+# =========================================================
+# Panel with legend underneath
+# =========================================================
+
+plot_exend_gut_panel <- function(min_prob = 0.001,
+                                 top_edges = 60,
+                                 label_cex = 0.9,
+                                 save_pdf = TRUE,
+                                 show_in_R = TRUE) {
+  
+  draw_panel <- function() {
+    
+    layout(
+      matrix(c(
+        1, 2,
+        3, 4,
+        5, 5
+      ), nrow = 3, byrow = TRUE),
+      widths = c(1, 1),
+      heights = c(1, 1, 0.28)
+    )
+    
+    par(mar = c(1, 1, 3, 1))
+    
+    for (cond in condition_order) {
+      plot_exend_gut_chord(
+        condition_use = cond,
+        min_prob = min_prob,
+        top_edges = top_edges,
+        label_cex = label_cex
+      )
+    }
+    
+    par(mar = c(0, 1, 0, 1))
+    plot.new()
+    
+    legend(
+      "center",
+      legend = pathways,
+      col = pathway_colors[pathways],
+      lwd = 6,
+      cex = 0.85,
+      bty = "n",
+      title = "Guidance / chemotaxis pathway",
+      horiz = TRUE,
+      x.intersp = 0.8,
+      y.intersp = 1.1
+    )
+    
+    layout(1)
+  }
+  
+  if (save_pdf) {
+    pdf_file <- file.path(
+      output_dir,
+      paste0(timepoint, "_ExEndoderm_Gut_GUIDANCE_chord_panel_legend_underneath.pdf")
+    )
+    
+    pdf(
+      pdf_file,
+      width = 28 / 2.54,
+      height = 24 / 2.54,
+      useDingbats = FALSE
+    )
+    
+    draw_panel()
+    dev.off()
+    message("Saved: ", pdf_file)
+  }
+  
+  if (show_in_R) {
+    draw_panel()
+  }
+}
+
+# =========================================================
+# Run
+# =========================================================
+
+plot_exend_gut_panel(
+  min_prob = 0.001,
+  top_edges = 60,
+  label_cex = 0.9,
+  save_pdf = TRUE,
+  show_in_R = TRUE
+)
