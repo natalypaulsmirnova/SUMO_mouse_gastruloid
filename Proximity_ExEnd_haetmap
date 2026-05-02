@@ -1,0 +1,254 @@
+# =========================================================
+# ExEnd identity proximity heatmap
+# All timepoints × experimental conditions
+# CONTROL / CTRL / Ctrl / ctrl excluded
+# =========================================================
+
+library(Seurat)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+# -----------------------------
+# Input files
+# -----------------------------
+files <- list(
+  "48h"  = "E:/Cloupe/601_48h_filtered.rds",
+  "72h"  = "E:/Cloupe/601_72h_filtered.rds",
+  "96h"  = "E:/Cloupe/601_96h_filtered.rds",
+  "120h" = "E:/Cloupe/601_120h_filtered.rds"
+)
+
+condition_col <- "group"
+
+# -----------------------------
+# Marker sets
+# -----------------------------
+marker_sets <- list(
+  ParE = c(
+    "Htra1","Pdgfra","Sox17","Hs3st1","Lifr","Bmper",
+    "Grem2","Nog","Fst","Thbd","Plat","Cryab","Eva1a","Fxyd3"
+  ),
+
+  VE_PVE = c(
+    "Cdhr2","Fabp1","Gjb1","Bmp6","Rdh10","Apoa2",
+    "Aldh1l1","Aldob","Creb3l3","Hnf4a","Apoa1"
+  ),
+
+  DVE_AVE = c(
+    "Lefty1","Cer1","Hhex","Dkk1","Gsc","Lhx1",
+    "Mest","Hesx1","Shisa2","Fzd5"
+  )
+)
+
+keep_clusters <- c(
+  "ExE endoderm",
+  "Visceral endoderm",
+  "Parietal endoderm"
+)
+
+# -----------------------------
+# Function per timepoint
+# -----------------------------
+process_timepoint <- function(file, tp) {
+
+  obj <- readRDS(file)
+
+  obj$cluster <- as.character(obj@meta.data$manual_marioni_label)
+  obj$condition <- as.character(obj@meta.data[[condition_col]])
+
+  print(paste("Conditions before filtering at", tp))
+  print(unique(obj$condition))
+
+  # Robust control removal
+  obj <- obj[, !tolower(obj$condition) %in% c("control", "ctrl")]
+
+  print(paste("Conditions after filtering at", tp))
+  print(unique(obj$condition))
+
+  # Keep only selected ExEnd-like clusters
+  obj <- obj[, obj$cluster %in% keep_clusters]
+
+  print(paste("Cluster counts at", tp))
+  print(table(obj$condition, obj$cluster))
+
+  genes_present <- rownames(obj)
+
+  marker_sets_present <- lapply(marker_sets, function(x) {
+    intersect(x, genes_present)
+  })
+
+  print(paste("Marker genes present at", tp))
+  print(sapply(marker_sets_present, length))
+
+  if (any(sapply(marker_sets_present, length) == 0)) {
+    stop(paste("One marker set has zero genes present at", tp))
+  }
+
+  for (nm in names(marker_sets_present)) {
+    obj <- AddModuleScore(
+      object = obj,
+      features = list(marker_sets_present[[nm]]),
+      name = paste0(nm, "_score")
+    )
+  }
+
+  colnames(obj@meta.data)[grep("_score1$", colnames(obj@meta.data))] <-
+    paste0(names(marker_sets_present), "_score")
+
+  df <- obj@meta.data %>%
+    select(
+      condition,
+      cluster,
+      ParE_score,
+      VE_PVE_score,
+      DVE_AVE_score
+    ) %>%
+    mutate(timepoint = tp)
+
+  return(df)
+}
+
+# -----------------------------
+# Run all timepoints
+# -----------------------------
+all_df <- bind_rows(
+  lapply(names(files), function(tp) {
+    process_timepoint(files[[tp]], tp)
+  })
+)
+
+# -----------------------------
+# Average raw module scores
+# -----------------------------
+summary_df <- all_df %>%
+  group_by(timepoint, condition, cluster) %>%
+  summarise(
+    ParE_score = mean(ParE_score, na.rm = TRUE),
+    VE_PVE_score = mean(VE_PVE_score, na.rm = TRUE),
+    DVE_AVE_score = mean(DVE_AVE_score, na.rm = TRUE),
+    n_cells = n(),
+    .groups = "drop"
+  )
+
+# -----------------------------
+# Convert raw scores to within-row proximity proportions
+# This answers:
+# for each timepoint × condition × cluster,
+# which identity is it closest to?
+# -----------------------------
+summary_df <- summary_df %>%
+  rowwise() %>%
+  mutate(
+    min_score = min(c(ParE_score, VE_PVE_score, DVE_AVE_score), na.rm = TRUE),
+
+    ParE_pos = ParE_score - min_score + 1e-6,
+    VE_PVE_pos = VE_PVE_score - min_score + 1e-6,
+    DVE_AVE_pos = DVE_AVE_score - min_score + 1e-6,
+
+    total_pos = ParE_pos + VE_PVE_pos + DVE_AVE_pos,
+
+    ParE_proximity = ParE_pos / total_pos,
+    VE_PVE_proximity = VE_PVE_pos / total_pos,
+    DVE_AVE_proximity = DVE_AVE_pos / total_pos,
+
+    closest_identity = c("ParE", "VE/PVE", "DVE/AVE")[
+      which.max(c(ParE_proximity, VE_PVE_proximity, DVE_AVE_proximity))
+    ],
+
+    closest_score = max(c(ParE_proximity, VE_PVE_proximity, DVE_AVE_proximity))
+  ) %>%
+  ungroup()
+
+# -----------------------------
+# Long format for heatmap
+# -----------------------------
+heat_df <- summary_df %>%
+  select(
+    timepoint,
+    condition,
+    cluster,
+    n_cells,
+    ParE_proximity,
+    VE_PVE_proximity,
+    DVE_AVE_proximity,
+    closest_identity,
+    closest_score
+  ) %>%
+  pivot_longer(
+    cols = c(ParE_proximity, VE_PVE_proximity, DVE_AVE_proximity),
+    names_to = "signature",
+    values_to = "proximity"
+  ) %>%
+  mutate(
+    signature = recode(
+      signature,
+      "ParE_proximity" = "ParE",
+      "VE_PVE_proximity" = "VE/PVE",
+      "DVE_AVE_proximity" = "DVE/AVE"
+    ),
+    timepoint = factor(timepoint, levels = c("48h", "72h", "96h", "120h")),
+    cluster = factor(cluster, levels = keep_clusters)
+  )
+
+# -----------------------------
+# Final heatmap
+# -----------------------------
+p <- ggplot(
+  heat_df,
+  aes(x = signature, y = cluster, fill = proximity)
+) +
+  geom_tile(color = "white", linewidth = 0.3) +
+  geom_text(
+    aes(label = sprintf("%.2f", proximity)),
+    size = 3
+  ) +
+  scale_fill_gradient(
+    low = "white",
+    high = "red",
+    limits = c(0, 1),
+    name = "Proximity"
+  ) +
+  facet_grid(timepoint ~ condition) +
+  theme_minimal(base_size = 11) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    panel.grid = element_blank(),
+    strip.text = element_text(face = "bold")
+  ) +
+  labs(
+    title = "Closest ExEnd-like identity by timepoint and condition",
+    subtitle = "Within-row proximity proportions; Control/Ctrl excluded",
+    x = NULL,
+    y = NULL
+  )
+
+print(p)
+
+# -----------------------------
+# Best identity table
+# -----------------------------
+best_identity_table <- summary_df %>%
+  select(
+    timepoint,
+    condition,
+    cluster,
+    n_cells,
+    ParE_score,
+    VE_PVE_score,
+    DVE_AVE_score,
+    ParE_proximity,
+    VE_PVE_proximity,
+    DVE_AVE_proximity,
+    closest_identity,
+    closest_score
+  ) %>%
+  arrange(timepoint, condition, cluster)
+
+print(best_identity_table)
+
+write.csv(
+  best_identity_table,
+  "E:/Cloupe/ExEnd_best_identity_by_timepoint_condition_NO_CONTROL.csv",
+  row.names = FALSE
+)
