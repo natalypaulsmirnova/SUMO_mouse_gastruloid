@@ -1,0 +1,434 @@
+# =========================================================
+# CELLCHAT 120h — Gut regions as senders -> all targets
+# Senders: Hindgut, Midgut, Gut tube, Foregut
+# ALL pathways
+# ORIGINAL source/target names used
+# Legend UNDERNEATH
+# Saves to: E:/GRAPHS
+# =========================================================
+
+library(readxl)
+library(dplyr)
+library(tidyr)
+library(circlize)
+
+cellchat_file <- "F:/CELLCHAT.xlsx"
+output_dir <- "E:/GRAPHS"
+dir.create(output_dir, showWarnings = FALSE, recursive = TRUE)
+
+timepoint <- "120h"
+
+gut_senders <- c(
+  "Hindgut",
+  "Midgut",
+  "Gut tube",
+  "Foregut"
+)
+
+clean_colnames <- function(x) {
+  x <- tolower(x)
+  x <- gsub("\\s+", "_", x)
+  x <- gsub("[^a-z0-9_]", "", x)
+  x
+}
+
+read_cellchat_sheet <- function(sheet_name, condition_name) {
+  
+  raw <- read_excel(cellchat_file, sheet = sheet_name, col_names = FALSE)
+  
+  header_row <- which(apply(raw, 1, function(r) {
+    any(grepl("^source$", tolower(as.character(r)))) &&
+      any(grepl("^target$", tolower(as.character(r))))
+  }))[1]
+  
+  if (is.na(header_row)) {
+    stop(paste0("Could not find source/target header in sheet: ", sheet_name))
+  }
+  
+  x <- read_excel(
+    cellchat_file,
+    sheet = sheet_name,
+    skip = header_row - 1,
+    col_types = "text"
+  )
+  
+  colnames(x) <- clean_colnames(colnames(x))
+  
+  x %>%
+    mutate(
+      condition = condition_name,
+      time = timepoint
+    )
+}
+
+# =========================================================
+# Load 120h sheets
+# =========================================================
+
+all_sheets <- excel_sheets(cellchat_file)
+
+sheet_map <- data.frame(
+  sheet = all_sheets[grepl(gsub("h", "", timepoint), all_sheets)],
+  stringsAsFactors = FALSE
+) %>%
+  mutate(
+    condition = case_when(
+      grepl("ctrl|control", sheet, ignore.case = TRUE) ~ "Control",
+      grepl("racl", sheet, ignore.case = TRUE) ~ "RACL",
+      grepl("nacl|naclb", sheet, ignore.case = TRUE) ~ "NACLB",
+      grepl("xal", sheet, ignore.case = TRUE) ~ "XAL",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  filter(!is.na(condition))
+
+print(sheet_map)
+
+df <- bind_rows(
+  lapply(seq_len(nrow(sheet_map)), function(i) {
+    read_cellchat_sheet(
+      sheet_name = sheet_map$sheet[i],
+      condition_name = sheet_map$condition[i]
+    )
+  })
+)
+
+df <- df %>%
+  mutate(
+    source = as.character(.data$source),
+    target = as.character(.data$target),
+    ligand = as.character(.data$ligand),
+    receptor = as.character(.data$receptor),
+    pathway_name = as.character(.data$pathway_name),
+    prob = as.numeric(.data$prob)
+  ) %>%
+  filter(
+    !is.na(source),
+    !is.na(target),
+    !is.na(pathway_name),
+    !is.na(prob),
+    prob > 0
+  )
+
+# =========================================================
+# Filter: Hindgut / Midgut / Gut tube / Foregut as senders
+# =========================================================
+
+df_gut_sender <- df %>%
+  filter(source %in% gut_senders)
+
+print(table(df_gut_sender$condition))
+print(sort(unique(df_gut_sender$source)))
+print(sort(unique(df_gut_sender$target)))
+print(sort(unique(df_gut_sender$pathway_name)))
+
+if (nrow(df_gut_sender) == 0) {
+  stop("No gut-sender interactions found. Check source names.")
+}
+
+# =========================================================
+# Colors
+# =========================================================
+
+pathways <- sort(unique(df_gut_sender$pathway_name))
+
+strong_palette <- c(
+  "#E41A1C",
+  "#377EB8",
+  "#4DAF4A",
+  "#984EA3",
+  "#FF7F00",
+  "#FFFF33",
+  "#A65628",
+  "#F781BF",
+  "#000000",
+  "#00CED1",
+  "#FFD700",
+  "#8B0000",
+  "#006400",
+  "#00008B",
+  "#FF1493"
+)
+
+if (length(pathways) > length(strong_palette)) {
+  strong_palette <- colorRampPalette(strong_palette)(length(pathways))
+}
+
+pathway_colors <- setNames(
+  strong_palette[seq_along(pathways)],
+  pathways
+)
+
+cell_order <- c(
+  "Foregut",
+  "Midgut",
+  "Hindgut",
+  "Gut tube",
+  "Definitive endoderm",
+  "ExE endoderm",
+  "Visceral endoderm",
+  "Parietal endoderm",
+  "VE",
+  "PE",
+  "NMP",
+  "NMPs",
+  "Caudal epiblast",
+  "Primitive streak",
+  "Anterior primitive streak",
+  "Node",
+  "Notochord",
+  "Presomitic mesoderm",
+  "Somitic mesoderm",
+  "Cardiopharyngeal mesoderm",
+  "Intermediate mesoderm",
+  "Lateral plate mesoderm",
+  "Endothelium",
+  "Neural tube",
+  "Spinal cord progenitors"
+)
+
+all_cells <- sort(unique(c(df_gut_sender$source, df_gut_sender$target)))
+
+cell_order <- c(
+  cell_order[cell_order %in% all_cells],
+  setdiff(all_cells, cell_order)
+)
+
+cell_colors_manual <- c(
+  "Foregut" = "#6A3D9A",
+  "Midgut" = "#9E3DFF",
+  "Hindgut" = "#C77CFF",
+  "Gut tube" = "#2E0854",
+  "Definitive endoderm" = "#4B0082",
+  "ExE endoderm" = "#006400",
+  "Visceral endoderm" = "#00A65A",
+  "Parietal endoderm" = "#7AC943",
+  "VE" = "#00A65A",
+  "PE" = "#7AC943",
+  "NMP" = "#D95F02",
+  "NMPs" = "#D95F02",
+  "Caudal epiblast" = "#E7298A",
+  "Primitive streak" = "#B15928",
+  "Anterior primitive streak" = "#A65628",
+  "Node" = "#1B9E77",
+  "Notochord" = "#00441B",
+  "Presomitic mesoderm" = "#FDB462",
+  "Somitic mesoderm" = "#FB8072",
+  "Cardiopharyngeal mesoderm" = "#E31A1C",
+  "Intermediate mesoderm" = "#A6CEE3",
+  "Lateral plate mesoderm" = "#1F78B4",
+  "Endothelium" = "#33A02C",
+  "Neural tube" = "#08306B",
+  "Spinal cord progenitors" = "#2171B5"
+)
+
+missing_cells <- setdiff(cell_order, names(cell_colors_manual))
+
+if (length(missing_cells) > 0) {
+  extra_cell_cols <- colorRampPalette(c(
+    "#999999", "#666666", "#CCCCCC", "#BDBDBD"
+  ))(length(missing_cells))
+  
+  cell_colors_manual <- c(
+    cell_colors_manual,
+    setNames(extra_cell_cols, missing_cells)
+  )
+}
+
+cell_colors <- cell_colors_manual[cell_order]
+
+condition_order <- c("Control", "RACL", "NACLB", "XAL")
+
+# =========================================================
+# Global scaling
+# =========================================================
+
+global_max_prob <- df_gut_sender %>%
+  group_by(source, target, pathway_name, condition) %>%
+  summarise(prob = sum(prob, na.rm = TRUE), .groups = "drop") %>%
+  summarise(max_prob = max(prob, na.rm = TRUE)) %>%
+  pull(max_prob)
+
+# =========================================================
+# Plot one chord
+# =========================================================
+
+plot_gut_sender_chord <- function(condition_use,
+                                  min_prob = 0.001,
+                                  top_edges = 80,
+                                  label_cex = 0.75) {
+  
+  dat <- df_gut_sender %>%
+    filter(
+      condition == condition_use,
+      prob >= min_prob
+    ) %>%
+    group_by(source, target, pathway_name) %>%
+    summarise(prob = sum(prob, na.rm = TRUE), .groups = "drop") %>%
+    arrange(desc(prob))
+  
+  if (!is.null(top_edges)) {
+    dat <- dat %>% slice_head(n = top_edges)
+  }
+  
+  if (nrow(dat) == 0) {
+    plot.new()
+    title(paste0(condition_use, " ", timepoint, "\nNo gut-sender interactions"))
+    return(NULL)
+  }
+  
+  dat <- dat %>%
+    mutate(
+      scaled_prob = prob / global_max_prob,
+      scaled_prob = pmax(scaled_prob, 0.04)
+    )
+  
+  sectors_here <- unique(c(dat$source, dat$target))
+  
+  local_order <- c(
+    cell_order[cell_order %in% sectors_here],
+    setdiff(sectors_here, cell_order)
+  )
+  
+  local_cell_colors <- cell_colors[local_order]
+  
+  edge_cols <- pathway_colors[dat$pathway_name]
+  edge_cols[is.na(edge_cols)] <- "#999999"
+  
+  circos.clear()
+  circos.par(
+    gap.degree = 6,
+    start.degree = 90,
+    track.margin = c(0.01, 0.01),
+    points.overflow.warning = FALSE
+  )
+  
+  chordDiagram(
+    x = dat[, c("source", "target", "scaled_prob")],
+    order = local_order,
+    grid.col = local_cell_colors,
+    col = edge_cols,
+    transparency = 0.18,
+    directional = 1,
+    direction.type = c("arrows", "diffHeight"),
+    diffHeight = -0.035,
+    link.arr.type = "big.arrow",
+    link.sort = TRUE,
+    link.decreasing = FALSE,
+    annotationTrack = "grid",
+    preAllocateTracks = list(track.height = 0.20)
+  )
+  
+  circos.trackPlotRegion(
+    track.index = 1,
+    panel.fun = function(x, y) {
+      sector.name <- get.cell.meta.data("sector.index")
+      xlim <- get.cell.meta.data("xlim")
+      ylim <- get.cell.meta.data("ylim")
+      
+      circos.text(
+        x = mean(xlim),
+        y = ylim[1] + 0.18,
+        labels = sector.name,
+        facing = "clockwise",
+        niceFacing = TRUE,
+        adj = c(0, 0.5),
+        cex = label_cex
+      )
+    },
+    bg.border = NA
+  )
+  
+  title(
+    paste0(condition_use, " ", timepoint, " — gut regions as senders"),
+    cex.main = 1.1,
+    font.main = 2
+  )
+}
+
+# =========================================================
+# Panel with legend underneath
+# =========================================================
+
+plot_gut_sender_panel <- function(min_prob = 0.001,
+                                  top_edges = 80,
+                                  label_cex = 0.75,
+                                  save_pdf = TRUE,
+                                  show_in_R = TRUE) {
+  
+  draw_panel <- function() {
+    
+    layout(
+      matrix(c(
+        1, 2,
+        3, 4,
+        5, 5
+      ), nrow = 3, byrow = TRUE),
+      widths = c(1, 1),
+      heights = c(1, 1, 0.32)
+    )
+    
+    par(mar = c(1, 1, 3, 1))
+    
+    for (cond in condition_order) {
+      plot_gut_sender_chord(
+        condition_use = cond,
+        min_prob = min_prob,
+        top_edges = top_edges,
+        label_cex = label_cex
+      )
+    }
+    
+    par(mar = c(0, 1, 0, 1))
+    plot.new()
+    
+    legend(
+      "center",
+      legend = pathways,
+      col = pathway_colors[pathways],
+      lwd = 6,
+      cex = 0.75,
+      bty = "n",
+      title = "Pathway",
+      horiz = TRUE,
+      x.intersp = 0.75,
+      y.intersp = 1.1
+    )
+    
+    layout(1)
+  }
+  
+  if (save_pdf) {
+    pdf_file <- file.path(
+      output_dir,
+      paste0(timepoint, "_Gut_regions_as_senders_ALL_pathways_chord_panel.pdf")
+    )
+    
+    pdf(
+      pdf_file,
+      width = 30 / 2.54,
+      height = 25 / 2.54,
+      useDingbats = FALSE
+    )
+    
+    draw_panel()
+    dev.off()
+    message("Saved: ", pdf_file)
+  }
+  
+  if (show_in_R) {
+    draw_panel()
+  }
+}
+
+# =========================================================
+# Run
+# =========================================================
+
+plot_gut_sender_panel(
+  min_prob = 0.001,
+  top_edges = 80,
+  label_cex = 0.75,
+  save_pdf = TRUE,
+  show_in_R = TRUE
+)
