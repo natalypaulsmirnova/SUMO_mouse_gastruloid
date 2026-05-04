@@ -1,0 +1,98 @@
+library(readxl)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+file <- "Z:/Nataly/3rd_batch_MP1_for_Thomas_20042026.xlsx"
+
+sheet_use <- excel_sheets(file)[
+  grepl("RACL", excel_sheets(file), ignore.case = TRUE) &
+  grepl("72", excel_sheets(file), ignore.case = TRUE)
+][1]
+
+df <- read_excel(file, sheet = sheet_use)
+
+green_cols <- c(
+  "MeanGreen", "MeanGreen_2", "MeanGreen_4", "MeanGreen_6",
+  "MeanGreen_8", "MeanGreen_10", "MeanGreen_12",
+  "MeanGreen_14", "MeanGreen_16", "MeanGreen_18"
+)
+
+green_long <- df %>%
+  select(File = `#File`, all_of(green_cols)) %>%
+  pivot_longer(
+    cols = all_of(green_cols),
+    names_to = "col",
+    values_to = "green"
+  ) %>%
+  mutate(
+    segment = rep(0:9, times = nrow(df)),
+    green = as.numeric(green)
+  )
+
+# -----------------------------
+# ALIGNMENT STEP
+# -----------------------------
+green_aligned <- green_long %>%
+  group_by(File) %>%
+  mutate(
+    max_seg = segment[which.max(green)],
+    flip = max_seg <= 4,
+    segment_aligned = ifelse(flip, 9 - segment, segment)
+  ) %>%
+  ungroup()
+
+# -----------------------------
+# Z-SCORE per gastruloid
+# -----------------------------
+green_z <- green_aligned %>%
+  group_by(File) %>%
+  mutate(
+    green_z = scale(green)[,1],
+    green_z = pmax(pmin(green_z, 2), -2)
+  ) %>%
+  ungroup()
+
+# -----------------------------
+# MEDIAN PROFILE
+# -----------------------------
+median_profile <- green_z %>%
+  group_by(segment_aligned) %>%
+  summarise(
+    median_green = median(green_z, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# -----------------------------
+# PLOT
+# -----------------------------
+p <- ggplot() +
+  geom_line(
+    data = green_z,
+    aes(segment_aligned, green_z, group = File),
+    color = "grey70",
+    alpha = 0.4,
+    linewidth = 0.6
+  ) +
+  geom_line(
+    data = median_profile,
+    aes(segment_aligned, median_green),
+    color = "#00A651",
+    linewidth = 3
+  ) +
+  geom_point(
+    data = median_profile,
+    aes(segment_aligned, median_green),
+    color = "#00A651",
+    size = 3
+  ) +
+  theme_classic(base_size = 15) +
+  scale_x_continuous(breaks = 0:9) +
+  scale_y_continuous(limits = c(-2, 2)) +
+  labs(
+    title = "72h RACL — aligned BRA-GFP spatial profile",
+    x = "Aligned segment (posterior = 9)",
+    y = "Z-scored green intensity"
+  )
+
+p
