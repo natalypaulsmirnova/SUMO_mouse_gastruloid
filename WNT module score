@@ -1,0 +1,77 @@
+suppressPackageStartupMessages({
+  library(Seurat)
+  library(ggplot2)
+  library(scales)
+})
+
+# Load 72h object
+obj <- readRDS("601_72h_filtered.rds")
+
+# Condition column autodetect
+cond_col <- if ("group" %in% colnames(obj@meta.data)) "group" else "orig.ident"
+obj[[cond_col]] <- factor(obj[[cond_col]][,1], levels = c("Ctrl","RACL","NACL","XAL"))
+
+# WNT response gene set (your list)
+wnt_genes <- c("Axin2","Lef1","Sp5","Notum","Tcf7",
+               "Cdx1","Cdx2","Cdx4","Msgn1","Tbx6","Dkk1","Ccnd1")
+
+# Keep only present genes
+wnt_genes <- intersect(wnt_genes, rownames(obj))
+message("WNT genes present: ", length(wnt_genes))
+print(wnt_genes)
+if (length(wnt_genes) < 5) stop("Too few WNT genes detected in this object.")
+
+# Compute module score (creates WNT1; if repeated, WNT2 etc.)
+obj <- AddModuleScore(obj, features = list(wnt_genes), name = "WNT")
+
+# Use newest WNT score column
+wnt_cols <- grep("^WNT\\d+$", colnames(obj@meta.data), value = TRUE)
+wnt_col  <- wnt_cols[length(wnt_cols)]
+message("Using WNT score column: ", wnt_col)
+
+# Fixed scale (set to -0.1..0.1, since your module scores are in that range)
+# If your actual range is wider, change these numbers after checking `range()`.
+print(range(obj@meta.data[[wnt_col]], na.rm = TRUE))
+lims <- c(-0.1, 0.1)
+
+# Colors
+low_blue <- "#A6CEE3"
+high_red <- "#E31A1C"
+
+# UMAP, split by condition, identical scale across panels
+p <- FeaturePlot(
+  obj,
+  features = wnt_col,
+  reduction = "umap",
+  split.by = cond_col,
+  pt.size = 1,
+  min.cutoff = lims[1],
+  max.cutoff = lims[2],
+  keep.scale = "feature"
+) &
+  scale_color_gradient(
+    low = low_blue,
+    high = high_red,
+    limits = lims,
+    oob = squish,
+    breaks = c(lims[1], 0, lims[2])
+  ) &
+  NoAxes() &
+  theme(
+    legend.position = "right",
+    legend.title = element_blank(),
+    legend.text  = element_text(size = 8)
+  ) &
+  guides(
+    color = guide_colorbar(
+      barheight = unit(45, "mm"),
+      barwidth  = unit(5, "mm")
+    )
+  )
+
+p
+
+ggsave("601_72h_WNTscore_UMAP_split_blue_red_-0.1_0.1.pdf",
+       p, width = 14, height = 5, useDingbats = FALSE)
+ggsave("601_72h_WNTscore_UMAP_split_blue_red_-0.1_0.1.png",
+       p, width = 14, height = 5, dpi = 300)
