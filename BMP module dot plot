@@ -1,0 +1,87 @@
+suppressPackageStartupMessages({
+  library(Seurat)
+  library(dplyr)
+  library(ggplot2)
+})
+
+# Load 120h object
+obj <- readRDS("601_120h_filtered.rds")
+
+cond_col <- if ("group" %in% colnames(obj@meta.data)) "group" else "orig.ident"
+cluster_col <- "manual_marioni_label"
+stopifnot(cluster_col %in% colnames(obj@meta.data))
+
+obj[[cond_col]] <- factor(obj[[cond_col]][,1],
+                          levels = c("Ctrl","RACL","NACL","XAL"))
+
+# BMP response module (downstream targets)
+bmp_candidates <- c("Id1","Id2","Id3","Smad6","Smad7","Msx1","Msx2","Bambi")
+
+bmp_genes <- intersect(bmp_candidates, rownames(obj))
+message("BMP genes present: ", length(bmp_genes))
+print(bmp_genes)
+if (length(bmp_genes) < 4) stop("Too few BMP genes present to compute BMP module score.")
+
+# Compute BMP score
+obj <- AddModuleScore(obj, features = list(bmp_genes), name = "BMP")
+bmp_cols <- grep("^BMP\\d+$", colnames(obj@meta.data), value = TRUE)
+bmp_col  <- bmp_cols[length(bmp_cols)]
+message("Using BMP score column: ", bmp_col)
+
+# Build data table
+df <- FetchData(obj, vars = c(bmp_col, cluster_col, cond_col))
+colnames(df) <- c("bmp_score","cluster","condition")
+
+# Remove ExE ectoderm
+df <- df %>% filter(cluster != "ExE ectoderm")
+
+# Filter clusters with >=20 total cells
+valid_clusters <- df %>%
+  group_by(cluster) %>%
+  summarise(n_total = n(), .groups = "drop") %>%
+  filter(n_total >= 20) %>%
+  pull(cluster)
+
+dot_data <- df %>%
+  filter(cluster %in% valid_clusters) %>%
+  group_by(cluster, condition) %>%
+  summarise(
+    mean_BMP = mean(bmp_score, na.rm = TRUE),
+    frac_positive = mean(bmp_score > 0),
+    n_cells = n(),
+    .groups = "drop"
+  )
+
+# Reverse cluster order
+dot_data$cluster <- factor(dot_data$cluster,
+                           levels = rev(sort(unique(dot_data$cluster))))
+dot_data$condition <- factor(dot_data$condition,
+                             levels = c("Ctrl","RACL","NACL","XAL"))
+
+# Plot
+p_dot <- ggplot(dot_data,
+                aes(x = condition, y = cluster,
+                    size = frac_positive,
+                    fill = mean_BMP)) +
+  geom_point(shape = 21, color = "black", stroke = 0.4) +
+  scale_fill_gradient2(
+    low = "#3E5FD7",
+    mid = "white",
+    high = "#E31A1C",
+    midpoint = 0
+  ) +
+  scale_size(range = c(2, 9)) +
+  theme_classic(base_size = 12) +
+  theme(
+    legend.title = element_blank(),
+    axis.title = element_blank(),
+    axis.line = element_line(color = "black")
+  ) +
+  labs(fill = "Mean BMP", size = "Frac > 0")
+
+p_dot
+
+ggsave("601_120h_BMP_dotplot_noExE_min20cells.pdf",
+       p_dot, width = 8, height = 6, useDingbats = FALSE)
+ggsave("601_120h_BMP_dotplot_noExE_min20cells.png",
+       p_dot, width = 8, height = 6, dpi = 300)
