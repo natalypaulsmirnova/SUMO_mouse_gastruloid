@@ -1,0 +1,60 @@
+suppressPackageStartupMessages({
+  library(Seurat)
+  library(ggplot2)
+  library(scales)
+})
+
+obj <- readRDS("601_72h_filtered.rds")
+
+obj$group <- factor(as.character(obj$group),
+                    levels = c("Ctrl","RACL","NACL","XAL"))
+
+genes_nodal_ext <- c(
+  "Lefty1","Lefty2","Smad7","Tgif1","Skil","Pitx2",
+  "Eomes","Foxa2","Gsc","Cer1","Lhx1","Mixl1","Otx2","Fgf8"
+)
+
+genes_nodal_ext <- intersect(genes_nodal_ext, rownames(obj))
+
+obj <- AddModuleScore(obj, features = list(genes_nodal_ext), name = "NODAL")
+
+nodal_cols <- grep("^NODAL\\d+$", colnames(obj@meta.data), value = TRUE)
+nodal_col <- nodal_cols[length(nodal_cols)]
+
+light_blue <- "#A6CEE3"
+bright_red <- "#E31A1C"   # strong, clean red
+
+p <- FeaturePlot(
+  obj,
+  features = nodal_col,
+  reduction = "umap",
+  split.by = "group",
+  pt.size = 1,
+  min.cutoff = -0.1,
+  max.cutoff = 0.1,
+  keep.scale = "feature"
+) &
+  scale_color_gradient(
+    low = light_blue,
+    high = bright_red,
+    limits = c(-0.1, 0.1),
+    oob = squish,
+    name = "NODAL score"
+  ) &
+  NoAxes() &
+  theme(
+    legend.position = "right",
+    legend.title = element_text(size = 9),
+    legend.text  = element_text(size = 8)
+  ) &
+  guides(
+    color = guide_colorbar(
+      barheight = unit(45, "mm"),
+      barwidth  = unit(5, "mm")
+    )
+  )
+
+p
+
+ggsave("601_72h_NODAL_UMAP_blue_brightred_-0.1_0.1.pdf",
+       p, width = 14, height = 5, useDingbats = FALSE)
