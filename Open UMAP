@@ -1,0 +1,108 @@
+# ============================================================
+# OPEN MERGED OBJECT + RUN UMAP
+# ============================================================
+
+suppressPackageStartupMessages({
+  library(Seurat)
+  library(ggplot2)
+})
+
+# -----------------------------
+# Load object
+# -----------------------------
+obj <- readRDS(
+  "Z:/Igor/scRNAseq/Aggregoids/4-2Da_2D_conditions_merged_raw.rds"
+)
+
+# -----------------------------
+# QC plots (optional)
+# -----------------------------
+VlnPlot(
+  obj,
+  features = c("nFeature_RNA", "nCount_RNA", "percent.mt"),
+  ncol = 3
+)
+
+# -----------------------------
+# Basic filtering
+# Adjust if needed
+# -----------------------------
+obj <- subset(
+  obj,
+  subset =
+    nFeature_RNA > 200 &
+    nFeature_RNA < 7000 &
+    percent.mt < 15
+)
+
+# -----------------------------
+# Standard preprocessing
+# -----------------------------
+obj <- NormalizeData(obj)
+
+obj <- FindVariableFeatures(
+  obj,
+  selection.method = "vst",
+  nfeatures = 3000
+)
+
+obj <- ScaleData(obj)
+
+obj <- RunPCA(
+  obj,
+  npcs = 50
+)
+
+# -----------------------------
+# Neighbors + clustering
+# -----------------------------
+obj <- FindNeighbors(
+  obj,
+  dims = 1:30
+)
+
+obj <- FindClusters(
+  obj,
+  resolution = 0.4
+)
+
+# -----------------------------
+# Run UMAP
+# -----------------------------
+obj <- RunUMAP(
+  obj,
+  dims = 1:30
+)
+
+# -----------------------------
+# UMAP by clusters
+# -----------------------------
+p1 <- DimPlot(
+  obj,
+  reduction = "umap",
+  label = TRUE
+) +
+  ggtitle("Clusters")
+
+print(p1)
+
+# -----------------------------
+# UMAP by 2D condition
+# -----------------------------
+p2 <- DimPlot(
+  obj,
+  reduction = "umap",
+  group.by = "condition_2D"
+) +
+  ggtitle("2D conditions")
+
+print(p2)
+
+# -----------------------------
+# Save processed object
+# IMPORTANT
+# -----------------------------
+saveRDS(
+  obj,
+  "Z:/Igor/scRNAseq/Aggregoids/4-2Da_2D_conditions_processed.rds"
+)
