@@ -1,0 +1,248 @@
+# ============================================================
+# TERNARY PLOT — HUMAN 2D CONDITIONS
+# Axes:
+# 1) PS / posterior / caudal / axial extension
+# 2) Organizer / APS
+# 3) Pluripotency
+# ============================================================
+
+suppressPackageStartupMessages({
+  library(Seurat)
+  library(ggplot2)
+  library(dplyr)
+})
+
+# Install ggtern if missing
+if (!requireNamespace("ggtern", quietly = TRUE)) {
+  install.packages("ggtern")
+}
+library(ggtern)
+
+# -----------------------------
+# Load object
+# -----------------------------
+obj <- readRDS(
+  "Z:/Igor/scRNAseq/Aggregoids/2d/4-2Da_2D_conditions_processed.rds"
+)
+
+# -----------------------------
+# Check condition column
+# -----------------------------
+if (!"condition_2D" %in% colnames(obj@meta.data)) {
+  stop("condition_2D column not found in metadata.")
+}
+
+obj$condition_2D <- factor(
+  obj$condition_2D,
+  levels = c("UT", "CHIR", "RACL", "TNKSi")
+)
+
+# ============================================================
+# HUMAN GENE SETS
+# ============================================================
+
+posterior_genes <- c(
+  "TBXT", "CDX1", "CDX2", "CDX4",
+  "WNT3", "WNT3A", "AXIN2", "LEF1",
+  "MIXL1", "MSGN1", "TBX6",
+  "NKX1-2", "EVX1", "HOXA1", "HOXB1",
+  "FGF8", "FGF4"
+)
+
+organizer_aps_genes <- c(
+  "EOMES", "GSC", "CER1", "LEFTY1", "LEFTY2",
+  "NODAL", "FOXA2", "LHX1", "CHRD",
+  "DKK1", "OTX2", "HESX1"
+)
+
+pluripotency_genes <- c(
+  "POU5F1", "SOX2", "NANOG",
+  "PRDM14", "DPPA4", "DPPA5",
+  "UTF1", "ZFP42", "LIN28A",
+  "TDGF1", "SALL4"
+)
+
+# -----------------------------
+# Keep only genes present
+# -----------------------------
+posterior_genes <- intersect(posterior_genes, rownames(obj))
+organizer_aps_genes <- intersect(organizer_aps_genes, rownames(obj))
+pluripotency_genes <- intersect(pluripotency_genes, rownames(obj))
+
+message("Posterior genes present: ", length(posterior_genes))
+print(posterior_genes)
+
+message("Organizer/APS genes present: ", length(organizer_aps_genes))
+print(organizer_aps_genes)
+
+message("Pluripotency genes present: ", length(pluripotency_genes))
+print(pluripotency_genes)
+
+if (length(posterior_genes) < 3) stop("Too few posterior genes found.")
+if (length(organizer_aps_genes) < 3) stop("Too few organizer/APS genes found.")
+if (length(pluripotency_genes) < 3) stop("Too few pluripotency genes found.")
+
+# ============================================================
+# MODULE SCORES
+# ============================================================
+
+obj <- AddModuleScore(
+  obj,
+  features = list(posterior_genes),
+  name = "Posterior_"
+)
+
+obj <- AddModuleScore(
+  obj,
+  features = list(organizer_aps_genes),
+  name = "OrganizerAPS_"
+)
+
+obj <- AddModuleScore(
+  obj,
+  features = list(pluripotency_genes),
+  name = "Pluripotency_"
+)
+
+# Created columns:
+# Posterior_1
+# OrganizerAPS_1
+# Pluripotency_1
+
+# ============================================================
+# CONVERT MODULE SCORES TO TERNARY COORDINATES
+# ============================================================
+# Module scores can be negative.
+# For ternary plotting, we shift each axis to positive values,
+# then convert each cell to proportions summing to 1.
+
+df <- obj@meta.data %>%
+  mutate(
+    Posterior_raw   = Posterior_1,
+    Organizer_raw   = OrganizerAPS_1,
+    Pluripotency_raw = Pluripotency_1
+  )
+
+# Shift scores so all are positive
+min_all <- min(
+  df$Posterior_raw,
+  df$Organizer_raw,
+  df$Pluripotency_raw,
+  na.rm = TRUE
+)
+
+shift_value <- abs(min_all) + 1e-6
+
+df <- df %>%
+  mutate(
+    Posterior_shifted    = Posterior_raw + shift_value,
+    Organizer_shifted    = Organizer_raw + shift_value,
+    Pluripotency_shifted = Pluripotency_raw + shift_value,
+    total_score = Posterior_shifted + Organizer_shifted + Pluripotency_shifted,
+    Posterior = Posterior_shifted / total_score,
+    Organizer_APS = Organizer_shifted / total_score,
+    Pluripotency = Pluripotency_shifted / total_score
+  )
+
+# ============================================================
+# COLORS
+# ============================================================
+
+condition_colors <- c(
+  "UT"    = "#3B0F70",  # deep purple
+  "CHIR"  = "#0047FF",  # ultramarine blue
+  "RACL"  = "#FF1A1A",  # bright red
+  "TNKSi" = "#FFC857"   # light yellow-orange
+)
+
+# ============================================================
+# TERNARY PLOT — ALL CONDITIONS TOGETHER
+# ============================================================
+
+p_all <- ggtern(
+  data = df,
+  aes(
+    x = Posterior,
+    y = Organizer_APS,
+    z = Pluripotency,
+    color = condition_2D
+  )
+) +
+  geom_point(
+    size = 1.2,
+    alpha = 0.55
+  ) +
+  scale_color_manual(values = condition_colors) +
+  labs(
+    title = "Human 2D aggregoids: ternary state map",
+    T = "PS / posterior / caudal",
+    L = "Organizer / APS",
+    R = "Pluripotency",
+    color = "Condition"
+  ) +
+  theme_bw(base_size = 15) +
+  theme_showarrows() +
+  theme(
+    legend.position = "right",
+    plot.title = element_text(hjust = 0.5)
+  )
+
+print(p_all)
+
+# ============================================================
+# TERNARY PLOT — SPLIT BY CONDITION
+# ============================================================
+
+p_split <- ggtern(
+  data = df,
+  aes(
+    x = Posterior,
+    y = Organizer_APS,
+    z = Pluripotency,
+    color = condition_2D
+  )
+) +
+  geom_point(
+    size = 1.1,
+    alpha = 0.6
+  ) +
+  scale_color_manual(values = condition_colors) +
+  facet_wrap(~condition_2D, ncol = 2) +
+  labs(
+    title = "Human 2D aggregoids: ternary state map by condition",
+    T = "PS / posterior / caudal",
+    L = "Organizer / APS",
+    R = "Pluripotency"
+  ) +
+  theme_bw(base_size = 14) +
+  theme_showarrows() +
+  theme(
+    legend.position = "none",
+    plot.title = element_text(hjust = 0.5)
+  )
+
+print(p_split)
+
+# ============================================================
+# SAVE
+# ============================================================
+
+ggsave(
+  "Z:/Igor/scRNAseq/Aggregoids/2d/ternary_human_2D_all_conditions.pdf",
+  p_all,
+  width = 7,
+  height = 6
+)
+
+ggsave(
+  "Z:/Igor/scRNAseq/Aggregoids/2d/ternary_human_2D_split_conditions.pdf",
+  p_split,
+  width = 10,
+  height = 8
+)
+
+# Optional: save object with module scores
+saveRDS(
+  obj,
+  "Z:/Igor/scRNAseq/Aggregoids/2d/4-2Da_2D_conditions_processed_with_ternary_scores.rds"
+)
