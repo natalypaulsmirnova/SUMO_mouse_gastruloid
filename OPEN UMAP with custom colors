@@ -1,0 +1,142 @@
+# ============================================================
+# OPEN PROCESSED / RAW OBJECT + UMAP WITH CUSTOM CONDITION COLORS
+# ============================================================
+
+suppressPackageStartupMessages({
+  library(Seurat)
+  library(ggplot2)
+})
+
+# -----------------------------
+# Load object
+# -----------------------------
+obj <- readRDS(
+  "Z:/Igor/scRNAseq/Aggregoids/4-2Da_2D_conditions_merged_raw.rds"
+)
+
+# -----------------------------
+# Make sure condition is ordered
+# -----------------------------
+obj$condition_2D <- factor(
+  obj$condition_2D,
+  levels = c("UT", "CHIR", "RACL", "TNKSi")
+)
+
+# -----------------------------
+# Add mitochondrial percentage if missing
+# -----------------------------
+if (!"percent.mt" %in% colnames(obj@meta.data)) {
+  obj[["percent.mt"]] <- PercentageFeatureSet(
+    obj,
+    pattern = "^mt-|^MT-"
+  )
+}
+
+# -----------------------------
+# Basic QC filtering
+# Adjust thresholds if needed
+# -----------------------------
+obj <- subset(
+  obj,
+  subset =
+    nFeature_RNA > 200 &
+    nFeature_RNA < 7000 &
+    percent.mt < 15
+)
+
+# -----------------------------
+# Standard preprocessing
+# -----------------------------
+obj <- NormalizeData(obj)
+
+obj <- FindVariableFeatures(
+  obj,
+  selection.method = "vst",
+  nfeatures = 3000
+)
+
+obj <- ScaleData(obj)
+
+obj <- RunPCA(
+  obj,
+  npcs = 50
+)
+
+obj <- FindNeighbors(
+  obj,
+  dims = 1:30
+)
+
+obj <- FindClusters(
+  obj,
+  resolution = 0.4
+)
+
+obj <- RunUMAP(
+  obj,
+  dims = 1:30
+)
+
+# -----------------------------
+# Custom condition colors
+# -----------------------------
+condition_colors <- c(
+  "UT"    = "#3B0F70",  # deep purple
+  "CHIR"  = "#0047FF",  # ultramarine blue
+  "RACL"  = "#FF1A1A",  # bright red
+  "TNKSi" = "#FFC857"   # light yellow-orange
+)
+
+# -----------------------------
+# UMAP by 2D condition
+# -----------------------------
+p_condition <- DimPlot(
+  obj,
+  reduction = "umap",
+  group.by = "condition_2D",
+  cols = condition_colors,
+  pt.size = 0.6
+) +
+  ggtitle("4-2Da 2D conditions") +
+  theme_classic(base_size = 16)
+
+print(p_condition)
+
+# -----------------------------
+# UMAP by Seurat clusters
+# -----------------------------
+p_clusters <- DimPlot(
+  obj,
+  reduction = "umap",
+  label = TRUE,
+  pt.size = 0.6
+) +
+  ggtitle("Seurat clusters") +
+  theme_classic(base_size = 16)
+
+print(p_clusters)
+
+# -----------------------------
+# Save processed object
+# -----------------------------
+saveRDS(
+  obj,
+  "Z:/Igor/scRNAseq/Aggregoids/4-2Da_2D_conditions_processed.rds"
+)
+
+# -----------------------------
+# Optional: save UMAPs as PDF
+# -----------------------------
+ggsave(
+  "Z:/Igor/scRNAseq/Aggregoids/4-2Da_UMAP_condition_custom_colors.pdf",
+  p_condition,
+  width = 7,
+  height = 6
+)
+
+ggsave(
+  "Z:/Igor/scRNAseq/Aggregoids/4-2Da_UMAP_clusters.pdf",
+  p_clusters,
+  width = 7,
+  height = 6
+)
