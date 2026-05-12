@@ -1,0 +1,44 @@
+# genesets: 
+naive_genes <- c("Nanog","Pou5f1","Sox2","Esrrb","Klf2","Klf4","Tbx3","Zfp42","Dppa3")
+exit_genes  <- c("Fgf5","Otx2","Dnmt3b","Lefty1","Lefty2","T","Eomes") # пример, уточни под твой контекст
+pgc_genes   <- c("Prdm1","Prdm14","Tfap2c","Dppa3","Nanos3","Kit","Dnd1")
+
+# 1) module scores
+obj <- AddModuleScore(obj, features=list(naive_genes), name="S_naive_")
+obj <- AddModuleScore(obj, features=list(exit_genes),  name="S_exit_")
+obj <- AddModuleScore(obj, features=list(pgc_genes),   name="S_pgc_")
+
+# Columns
+md <- obj@meta.data
+
+# 2) scale 
+z_naive <- as.numeric(scale(md$S_naive_1))
+z_exit  <- as.numeric(scale(md$S_exit_1))
+z_pgc   <- as.numeric(scale(md$S_pgc_1))
+
+# 3) softmax -> 
+exp_naive <- exp(z_naive)
+exp_exit  <- exp(z_exit)
+exp_pgc   <- exp(z_pgc)
+den <- exp_naive + exp_exit + exp_pgc
+
+md$p_naive <- exp_naive / den
+md$p_exit  <- exp_exit  / den
+md$p_pgc   <- exp_pgc   / den
+
+# 4) 2D triangle coordiantes
+md$tri_x <- md$p_exit + 0.5 * md$p_pgc
+md$tri_y <- (sqrt(3)/2) * md$p_pgc
+
+obj@meta.data <- md
+
+# 5) plot (ggplot)
+library(ggplot2)
+ggplot(md, aes(tri_x, tri_y)) +
+  geom_point(size=0.25, alpha=0.6) +
+  coord_equal() +
+  theme_classic() +
+  labs(x=NULL, y=NULL)
+
+# Painting
+# ggplot(md, aes(tri_x, tri_y, color = sc_merged_gast_transfer_label)) + geom_point(...)
