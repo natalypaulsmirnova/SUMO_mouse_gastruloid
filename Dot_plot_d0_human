@@ -1,0 +1,226 @@
+# ============================================================
+# DOT PLOT — FULL HUMAN 2D STATE MARKER LIST
+# Conditions = Y axis, genes = X axis
+# Black contour dots
+# ============================================================
+
+suppressPackageStartupMessages({
+  library(Seurat)
+  library(ggplot2)
+  library(dplyr)
+})
+
+# -----------------------------
+# Load object
+# -----------------------------
+obj <- readRDS(
+  "Z:/Igor/scRNAseq/Aggregoids/2d/4-2Da_2D_conditions_processed.rds"
+)
+
+# -----------------------------
+# Conditions
+# -----------------------------
+obj$condition_2D <- factor(
+  obj$condition_2D,
+  levels = c("UT", "CHIR", "RACL", "TNKSi")
+)
+
+Idents(obj) <- "condition_2D"
+
+# ============================================================
+# FULL GENE MODULES
+# ============================================================
+
+pluripotency_genes <- c(
+  "POU5F1", "SOX2", "NANOG", "SALL4",
+  "LIN28A", "TDGF1", "ZIC2", "ZIC3", "DNMT3B",
+  "PRDM14", "DPPA4", "DPPA5", "UTF1"
+)
+
+exit_pluripotency_genes <- c(
+  "OTX2", "ZIC2", "ZIC3",
+  "DNMT3A", "DNMT3B",
+  "FGFR1", "FGFR2",
+  "FZD7",
+  "CD24", "DUSP6",
+  "EGR1", "EGR2"
+)
+
+epithelial_genes <- c(
+  "CDH1", "EPCAM",
+  "KRT8", "KRT18",
+  "CLDN6", "OCLN",
+  "TJP1"
+)
+
+emt_genes <- c(
+  "VIM", "SNAI1", "SNAI2",
+  "ZEB1", "ZEB2",
+  "TWIST1",
+  "FN1", "MMP2", "MMP14",
+  "ITGA5", "ITGB1",
+  "CDH2"
+)
+
+wnt_response_genes <- c(
+  "AXIN2", "LEF1", "TCF7",
+  "SP5", "DKK1", "NOTUM",
+  "NKD1", "NKD2",
+  "LGR5", "MYC",
+  "CCND1"
+)
+
+posterior_wnt_genes <- c(
+  "TBXT", "CDX1", "CDX2",
+  "MSGN1", "TBX6",
+  "WNT5B", "GBX2",
+  "HOXA1", "HOXB1"
+)
+
+nodal_response_genes <- c(
+  "NODAL",
+  "LEFTY1", "LEFTY2",
+  "EOMES", "MIXL1",
+  "GSC", "CER1",
+  "SMAD7", "SKIL",
+  "TGIF1",
+  "ID1"
+)
+
+aps_de_genes <- c(
+  "SOX17", "FOXA2",
+  "CER1", "LEFTY1",
+  "GSC", "HHEX",
+  "LHX1", "EOMES",
+  "GATA6"
+)
+
+hippo_yap_genes <- c(
+  "YAP1", "WWTR1",
+  "TEAD1", "TEAD2", "TEAD3", "TEAD4",
+  "CTGF", "CYR61", "ANKRD1",
+  "AMOTL2", "BIRC5",
+  "AREG"
+)
+
+hippo_regulator_genes <- c(
+  "LATS1", "LATS2",
+  "MST1", "MST2",
+  "SAV1",
+  "NF2",
+  "AMOT", "AMOTL1", "AMOTL2"
+)
+
+# ============================================================
+# COMBINE FULL LIST
+# ============================================================
+
+genes_use <- unique(c(
+  pluripotency_genes,
+  exit_pluripotency_genes,
+  epithelial_genes,
+  emt_genes,
+  wnt_response_genes,
+  posterior_wnt_genes,
+  nodal_response_genes,
+  aps_de_genes,
+  hippo_yap_genes,
+  hippo_regulator_genes
+))
+
+genes_present <- genes_use[genes_use %in% rownames(obj)]
+genes_missing <- setdiff(genes_use, rownames(obj))
+
+message("Genes present:")
+print(genes_present)
+
+message("Genes missing:")
+print(genes_missing)
+
+# ============================================================
+# DOTPLOT DATA
+# ============================================================
+
+dp <- DotPlot(
+  obj,
+  features = genes_present,
+  group.by = "condition_2D",
+  scale = TRUE
+)$data
+
+dp$id <- factor(
+  dp$id,
+  levels = rev(c("UT", "CHIR", "RACL", "TNKSi"))
+)
+
+dp$features.plot <- factor(
+  dp$features.plot,
+  levels = genes_present
+)
+
+# ============================================================
+# PLOT
+# ============================================================
+
+p <- ggplot(
+  dp,
+  aes(
+    x = features.plot,
+    y = id
+  )
+) +
+  geom_point(
+    aes(size = pct.exp, fill = avg.exp.scaled),
+    shape = 21,
+    color = "black",
+    stroke = 0.35
+  ) +
+  scale_fill_gradient2(
+    low = "#2C5AA0",
+    mid = "white",
+    high = "#B40404",
+    midpoint = 0,
+    name = "Scaled\nexpression"
+  ) +
+  scale_size(
+    range = c(0.3, 7),
+    name = "% cells\nexpressing"
+  ) +
+  labs(
+    title = "D0",
+    x = "Genes",
+    y = "2D condition"
+  ) +
+  theme_classic(base_size = 14) +
+  theme(
+    axis.text.x = element_text(
+      angle = 45,
+      hjust = 1,
+      vjust = 1,
+      size = 8
+    ),
+    axis.text.y = element_text(size = 12),
+    plot.title = element_text(hjust = 0.5),
+    legend.position = "right"
+  )
+
+print(p)
+
+# ============================================================
+# SAVE
+# ============================================================
+
+ggsave(
+  "Z:/Igor/scRNAseq/Aggregoids/2d/dotplot_FULL_state_markers_conditions.pdf",
+  p,
+  width = 24,
+  height = 5.5
+)
+
+ggsave(
+  "Z:/Igor/scRNAseq/Aggregoids/2d/dotplot_FULL_state_markers_conditions.png",
+  p,
+  width = 24,
+  height = 5.5,
+  dpi = 300
+)
