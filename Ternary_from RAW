@@ -1,0 +1,246 @@
+# ============================================================
+# TERNARY PLOT — PS BIFURCATION
+# RAW MERGED OBJECT, NO QC FILTERING
+# Conditions named as: UT, CHIR, RACL, TNKSi
+# Average normalized expression scores
+# ============================================================
+
+suppressPackageStartupMessages({
+  library(Seurat)
+  library(ggplot2)
+  library(dplyr)
+  library(Matrix)
+})
+
+if (!requireNamespace("ggtern", quietly = TRUE)) {
+  install.packages("ggtern")
+}
+library(ggtern)
+
+# -----------------------------
+# Load RAW merged object
+# -----------------------------
+obj <- readRDS(
+  "Z:/Igor/scRNAseq/Aggregoids/2d/4-2Da_2D_conditions_merged_raw.rds"
+)
+
+# -----------------------------
+# Condition order
+# -----------------------------
+obj$condition_2D <- factor(
+  obj$condition_2D,
+  levels = c("UT", "CHIR", "RACL", "TNKSi")
+)
+
+DefaultAssay(obj) <- "RNA"
+
+# ============================================================
+# NO QC FILTERING
+# ============================================================
+
+obj <- NormalizeData(
+  obj,
+  normalization.method = "LogNormalize",
+  scale.factor = 10000
+)
+
+obj <- JoinLayers(obj)
+
+# ============================================================
+# MARKER SETS
+# ============================================================
+
+posterior_mesoderm_genes <- c(
+  "TBXT", "MSGN1", "TBX6", "CDX2", "WNT5B"
+)
+
+aps_de_genes <- c(
+  "SOX17", "FOXA2", "CER1", "LEFTY1", "GSC", "HHEX"
+)
+
+strict_pluri_genes <- c(
+  "POU5F1", "SOX2", "NANOG", "LIN28A",
+  "UTF1", "PRDM14", "DPPA4", "DPPA5"
+)
+
+posterior_present <- intersect(posterior_mesoderm_genes, rownames(obj))
+aps_de_present <- intersect(aps_de_genes, rownames(obj))
+pluri_present <- intersect(strict_pluri_genes, rownames(obj))
+
+message("Posterior mesoderm genes present:")
+print(posterior_present)
+
+message("APS / DE genes present:")
+print(aps_de_present)
+
+message("Strict pluripotency genes present:")
+print(pluri_present)
+
+if (length(posterior_present) < 3) stop("Too few posterior mesoderm genes found.")
+if (length(aps_de_present) < 3) stop("Too few APS / DE genes found.")
+if (length(pluri_present) < 3) stop("Too few strict pluripotency genes found.")
+
+# ============================================================
+# AVERAGE EXPRESSION SCORE FUNCTION
+# ============================================================
+
+avg_expr_score <- function(seurat_obj, genes, score_name) {
+  
+  expr_mat <- LayerData(
+    seurat_obj,
+    assay = "RNA",
+    layer = "data"
+  )
+  
+  genes <- intersect(genes, rownames(expr_mat))
+  
+  seurat_obj[[score_name]] <- Matrix::colMeans(
+    expr_mat[genes, , drop = FALSE]
+  )
+  
+  return(seurat_obj)
+}
+
+# ============================================================
+# CALCULATE AVERAGE EXPRESSION SCORES
+# ============================================================
+
+obj <- avg_expr_score(obj, posterior_present, "PosteriorMesoderm_avg")
+obj <- avg_expr_score(obj, aps_de_present, "APS_DE_avg")
+obj <- avg_expr_score(obj, pluri_present, "StrictPluri_avg")
+
+# ============================================================
+# BUILD TERNARY DATA
+# ============================================================
+
+df <- obj@meta.data %>%
+  mutate(
+    PosteriorMesoderm_raw = PosteriorMesoderm_avg,
+    APS_DE_raw = APS_DE_avg,
+    Pluri_raw = StrictPluri_avg
+  )
+
+epsilon <- 1e-6
+
+df <- df %>%
+  mutate(
+    PosteriorMesoderm_pos = PosteriorMesoderm_raw + epsilon,
+    APS_DE_pos = APS_DE_raw + epsilon,
+    Pluri_pos = Pluri_raw + epsilon,
+
+    total_score =
+      PosteriorMesoderm_pos +
+      APS_DE_pos +
+      Pluri_pos,
+
+    Posterior_Mesoderm = PosteriorMesoderm_pos / total_score,
+    APS_DE = APS_DE_pos / total_score,
+    Strict_Pluripotency = Pluri_pos / total_score
+  )
+
+# ============================================================
+# COLORS
+# ============================================================
+
+condition_colors <- c(
+  "UT"    = "#3B0F70",
+  "CHIR"  = "#0047FF",
+  "RACL"  = "#FF1A1A",
+  "TNKSi" = "#FFC857"
+)
+
+# ============================================================
+# ALL CONDITIONS
+# ============================================================
+
+p_all <- ggtern(
+  data = df,
+  aes(
+    x = Posterior_Mesoderm,
+    y = APS_DE,
+    z = Strict_Pluripotency,
+    fill = condition_2D
+  )
+) +
+  geom_point(
+    size = 2.2,
+    alpha = 0.65,
+    shape = 21,
+    stroke = 0.35,
+    color = "black"
+  ) +
+  scale_fill_manual(values = condition_colors) +
+  labs(
+    T = "Posterior mesoderm",
+    L = "APS / definitive endoderm",
+    R = "Strict pluripotency",
+    fill = "Condition"
+  ) +
+  theme_bw(base_size = 15) +
+  theme_showarrows() +
+  theme(
+    legend.position = "right"
+  )
+
+print(p_all)
+
+# ============================================================
+# SPLIT BY CONDITION
+# ============================================================
+
+p_split <- ggtern(
+  data = df,
+  aes(
+    x = Posterior_Mesoderm,
+    y = APS_DE,
+    z = Strict_Pluripotency,
+    fill = condition_2D
+  )
+) +
+  geom_point(
+    size = 2.2,
+    alpha = 0.7,
+    shape = 21,
+    stroke = 0.35,
+    color = "black"
+  ) +
+  scale_fill_manual(values = condition_colors) +
+  facet_wrap(
+    ~condition_2D,
+    ncol = 2
+  ) +
+  labs(
+    T = "Posterior mesoderm",
+    L = "APS / definitive endoderm",
+    R = "Strict pluripotency"
+  ) +
+  theme_bw(base_size = 14) +
+  theme_showarrows() +
+  theme(
+    legend.position = "none"
+  )
+
+print(p_split)
+
+# ============================================================
+# SAVE
+# ============================================================
+
+ggsave(
+  "Z:/Igor/scRNAseq/Aggregoids/2d/ternary_PS_bifurcation_UNFILTERED_all_conditions_real_names.pdf",
+  p_all,
+  width = 7,
+  height = 6
+)
+
+ggsave(
+  "Z:/Igor/scRNAseq/Aggregoids/2d/ternary_PS_bifurcation_UNFILTERED_split_conditions_real_names.pdf",
+  p_split,
+  width = 10,
+  height = 8
+)
+
+saveRDS(
+  obj,
+  "Z:/Igor/scRNAseq/Aggregoids/2d/4-2Da_2D_conditions_unfiltered_PS_bifurcation_scores.rds"
+)
